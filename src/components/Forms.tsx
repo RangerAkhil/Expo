@@ -29,24 +29,24 @@ export function StoreForm({ onSuccess }: { onSuccess: () => void }) {
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-2">
         <Label>Store Name</Label>
-        <Input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Main Stage..." />
+        <Input required value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} placeholder="Main Stage..." />
       </div>
       <div className="space-y-2">
         <Label>Type</Label>
-        <Input required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} placeholder="Food, Tech, VIP..." />
+        <Input required value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value })} placeholder="Food, Tech, VIP..." />
       </div>
       <div className="grid grid-cols-3 gap-4">
         <div className="space-y-2">
           <Label>Cost ($)</Label>
-          <Input required type="number" value={formData.cost} onChange={e => setFormData({...formData, cost: Number(e.target.value)})} />
+          <Input required type="number" value={formData.cost} onChange={e => setFormData({ ...formData, cost: Number(e.target.value) })} />
         </div>
         <div className="space-y-2">
           <Label>Width (px)</Label>
-          <Input required type="number" value={formData.width} onChange={e => setFormData({...formData, width: Number(e.target.value)})} />
+          <Input required type="number" value={formData.width} onChange={e => setFormData({ ...formData, width: Number(e.target.value) })} />
         </div>
         <div className="space-y-2">
           <Label>Height (px)</Label>
-          <Input required type="number" value={formData.height} onChange={e => setFormData({...formData, height: Number(e.target.value)})} />
+          <Input required type="number" value={formData.height} onChange={e => setFormData({ ...formData, height: Number(e.target.value) })} />
         </div>
       </div>
       <Button type="submit" disabled={createStore.isPending} className="w-full">
@@ -78,22 +78,21 @@ export function EventSettingsForm({ currentSettings }: { currentSettings: EventS
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Canvas Width</Label>
-          <Input required type="number" value={formData.width} onChange={e => setFormData({...formData, width: Number(e.target.value)})} />
+          <Input required type="number" value={formData.width} onChange={e => setFormData({ ...formData, width: Number(e.target.value) })} />
         </div>
         <div className="space-y-2">
           <Label>Canvas Height</Label>
-          <Input required type="number" value={formData.height} onChange={e => setFormData({...formData, height: Number(e.target.value)})} />
+          <Input required type="number" value={formData.height} onChange={e => setFormData({ ...formData, height: Number(e.target.value) })} />
         </div>
       </div>
       <div className="space-y-2">
         <Label>Shape</Label>
-        <Select value={formData.shape} onValueChange={(v) => setFormData({...formData, shape: v as Shape})}>
+        <Select value={formData.shape} onValueChange={(v) => setFormData({ ...formData, shape: v as Shape })}>
           <SelectTrigger>
             <SelectValue placeholder="Select shape" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="square">Square</SelectItem>
-            <SelectItem value="rectangular">Rectangular</SelectItem>
+            <SelectItem value="fixed">Fixed</SelectItem>
             <SelectItem value="circular">Circular</SelectItem>
           </SelectContent>
         </Select>
@@ -118,11 +117,11 @@ export function UserForm({ onSuccess }: { onSuccess: () => void }) {
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-2">
         <Label>User Name</Label>
-        <Input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="John Doe" />
+        <Input required value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} placeholder="John Doe" />
       </div>
       <div className="space-y-2">
         <Label>Role</Label>
-        <Select value={formData.role} onValueChange={(v) => setFormData({...formData, role: v as UserRole})}>
+        <Select value={formData.role} onValueChange={(v) => setFormData({ ...formData, role: v as UserRole })}>
           <SelectTrigger>
             <SelectValue placeholder="Select role" />
           </SelectTrigger>

@@ -31,12 +31,42 @@ export function GroundLayout({
   const containerRef = useRef<HTMLDivElement>(null);
   const updateStore = useUpdateStore();
   const [positions, setPositions] = React.useState<Record<number, { x: number; y: number }>>({});
+  const [scale, setScale] = React.useState(1);
+  const [pan, setPan] = React.useState({ x: 0, y: 0 });
+  const isPanningRef = React.useRef(false);
+  const lastMouse = React.useRef({ x: 0, y: 0 });
+  const panStartRef = React.useRef<{ x: number; y: number } | null>(null);
+
   const isCircular = settings.shape === "circular";
   const placedStores = stores.filter((s) => s.x !== 0 || s.y !== 0);
-  const renderedStores = isInteractive ? placedStores : stores;
+  const renderedStores = placedStores;
   const hasInitialized = React.useRef(false);
   const isDraggingRef = React.useRef(false);
+  const viewportRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const wheelHandler = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+
+      e.preventDefault(); // now this works
+
+      const zoomIntensity = 0.1;
+
+      setScale((prev) => {
+        const next = e.deltaY > 0 ? prev - zoomIntensity : prev + zoomIntensity;
+        return Math.min(3, Math.max(0.5, next));
+      });
+    };
+
+    el.addEventListener("wheel", wheelHandler, { passive: false });
+
+    return () => {
+      el.removeEventListener("wheel", wheelHandler);
+    };
+  }, []);
   useEffect(() => {
     if (hasInitialized.current) return;
 
@@ -70,26 +100,6 @@ export function GroundLayout({
     });
   }, [stores]);
 
-  const fallbackPositions = React.useMemo(() => {
-    if (isInteractive) return {};
-    const unplaced = stores.filter((store) => store.x === 0 && store.y === 0);
-    const colWidth = 140;
-    const rowHeight = 120;
-    const cols = Math.max(1, Math.floor(settings.width / colWidth));
-    const map: Record<number, { x: number; y: number }> = {};
-
-    unplaced.forEach((store, idx) => {
-      const col = idx % cols;
-      const row = Math.floor(idx / cols);
-      map[store.id] = {
-        x: 16 + col * colWidth,
-        y: 16 + row * rowHeight,
-      };
-    });
-
-    return map;
-  }, [isInteractive, settings.width, stores]);
-
   const handleDrop = (e: React.DragEvent) => {
     if (!isInteractive) return;
     e.preventDefault();
@@ -116,6 +126,56 @@ export function GroundLayout({
   const usedArea = placedStores.reduce((acc, store) => acc + store.width * store.height, 0);
   const utilization = Math.min(100, Math.round((usedArea / totalArea) * 100)) || 0;
 
+  const handleWheel = (e: React.WheelEvent) => {
+    if (!e.ctrlKey) return;
+
+    e.preventDefault();
+
+    const zoomIntensity = 0.1;
+
+    setScale((prev) => {
+      const next = e.deltaY > 0 ? prev - zoomIntensity : prev + zoomIntensity;
+      return Math.min(3, Math.max(0.5, next));
+    });
+  };
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 2) return;
+
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-store]")) return;
+
+    panStartRef.current = { x: e.clientX, y: e.clientY };
+    lastMouse.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handleMouseUp = () => {
+    isPanningRef.current = false;
+    panStartRef.current = null;
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!panStartRef.current) return;
+
+    const dxTotal = e.clientX - panStartRef.current.x;
+    const dyTotal = e.clientY - panStartRef.current.y;
+
+    // start panning only after small movement
+    if (!isPanningRef.current) {
+      if (Math.abs(dxTotal) < 5 && Math.abs(dyTotal) < 5) return;
+      isPanningRef.current = true;
+    }
+
+    const dx = e.clientX - lastMouse.current.x;
+    const dy = e.clientY - lastMouse.current.y;
+
+    setPan((prev) => ({
+      x: prev.x + dx,
+      y: prev.y + dy
+    }));
+
+    lastMouse.current = { x: e.clientX, y: e.clientY };
+  };
+
   return (
     <div className="flex flex-col gap-4 w-full">
       {isInteractive && (
@@ -136,181 +196,194 @@ export function GroundLayout({
         </div>
       )}
 
-      <div className="w-full overflow-auto bg-muted rounded-2xl border shadow-inner max-h-[700px] relative p-8 flex items-center justify-center">
+      <div className="w-full overflow-auto bg-muted rounded-2xl border shadow-inner max-h-[700px] relative "
+        ref={viewportRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+      >
         <div
-          ref={containerRef}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          className={`relative bg-blueprint shadow-xl border-2 border-primary/20 transition-all ${isCircular ? "bg-blueprint-circular" : "rounded-lg"}`}
           style={{
-            width: settings.width,
-            height: settings.height,
-            minWidth: settings.width,
-            minHeight: settings.height,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+            transformOrigin: "0 0",
+            width: "fit-content",
+            height: "fit-content"
           }}
         >
-          {renderedStores.map((store) => {
-            const storeProducts = allProducts.filter((p) => p.storeId === store.id);
-            const bookedCount = storeProducts.filter((p) => p.status === "booked").length;
-            const myReservedCount = storeProducts.filter(
-              (p) => p.status === "reserved" && p.reservedById === currentUserId,
-            ).length;
-            const otherReservedCount = storeProducts.filter(
-              (p) => p.status === "reserved" && p.reservedById !== currentUserId,
-            ).length;
-            const hasPurchased = bookedCount > 0;
-            const hasMyReservation = myReservedCount > 0;
-            const hasOtherReservation = otherReservedCount > 0;
+          <div
+            ref={containerRef}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            className={`relative bg-blueprint shadow-xl border-2 border-primary/20 transition-all ${isCircular ? "bg-blueprint-circular" : "rounded-lg"}`}
+            style={{
+              width: settings.width,
+              height: settings.height,
+              minWidth: settings.width,
+              minHeight: settings.height,
+            }}
+          >
+            {renderedStores.map((store) => {
+              const storeProducts = allProducts.filter((p) => p.storeId === store.id);
+              const bookedCount = storeProducts.filter((p) => p.status === "booked").length;
+              const myReservedCount = storeProducts.filter(
+                (p) => p.status === "reserved" && p.reservedById === currentUserId,
+              ).length;
+              const otherReservedCount = storeProducts.filter(
+                (p) => p.status === "reserved" && p.reservedById !== currentUserId,
+              ).length;
+              const hasPurchased = bookedCount > 0;
+              const hasMyReservation = myReservedCount > 0;
+              const hasOtherReservation = otherReservedCount > 0;
 
-            return (
-              <motion.div
-                key={store.id}
-                drag={isInteractive}
-                dragListener={isInteractive}
-                dragMomentum={false}
-                dragElastic={0}
-                transition={{ duration: 0 }}
-                onPointerDown={(e) => {
-                  if (isInteractive) e.stopPropagation();
-                }}
-                onDragStart={() => {
-                  isDraggingRef.current = true;
-                }}
-                onDragEnd={(_, info) => {
-                  if (!isInteractive || !containerRef.current) return;
+              return (
+                <motion.div
+                  data-store
+                  key={store.id}
+                  drag={isInteractive && !isPanningRef.current}
+                  dragListener={isInteractive}
+                  dragMomentum={false}
+                  dragElastic={0}
+                  transition={{ duration: 0 }}
+                  onPointerDown={(e) => {
+                    if (isInteractive) e.stopPropagation();
+                  }}
+                  onDragStart={() => {
+                    isDraggingRef.current = true;
+                  }}
+                  onDragEnd={(_, info) => {
+                    if (!isInteractive || !containerRef.current) return;
 
-                  const rawX = (positions[store.id]?.x || 0) + info.offset.x;
-                  const rawY = (positions[store.id]?.y || 0) + info.offset.y;
+                    const rawX = (positions[store.id]?.x || 0) + info.offset.x / scale;
+                    const rawY = (positions[store.id]?.y || 0) + info.offset.y / scale;
+                    const isOutside =
+                      rawX + store.width * 0.5 < 0 ||
+                      rawY + store.height * 0.5 < 0 ||
+                      rawX + store.width * 0.5 > settings.width ||
+                      rawY + store.height * 0.5 > settings.height;
 
-                  const isOutside =
-                    rawX + store.width * 0.5 < 0 ||
-                    rawY + store.height * 0.5 < 0 ||
-                    rawX + store.width * 0.5 > settings.width ||
-                    rawY + store.height * 0.5 > settings.height;
+                    if (isOutside) {
+                      setPositions((prev) => ({
+                        ...prev,
+                        [store.id]: { x: 0, y: 0 },
+                      }));
 
-                  if (isOutside) {
+                      updateStore.mutate({ id: store.id, x: 0, y: 0 });
+                      window.setTimeout(() => {
+                        isDraggingRef.current = false;
+                      }, 0);
+                      return;
+                    }
+
                     setPositions((prev) => ({
                       ...prev,
-                      [store.id]: { x: 0, y: 0 },
+                      [store.id]: { x: rawX, y: rawY },
                     }));
 
-                    updateStore.mutate({ id: store.id, x: 0, y: 0 });
+                    updateStore.mutate({ id: store.id, x: rawX, y: rawY });
                     window.setTimeout(() => {
                       isDraggingRef.current = false;
                     }, 0);
-                    return;
+                  }}
+                  style={!isInteractive ? { cursor: onStoreClick ? "pointer" : "default" } : undefined}
+                  animate={
+                    isInteractive
+                      ? positions[store.id] ?? { x: store.x, y: store.y }
+                      : { x: store.x, y: store.y }
                   }
-
-                  setPositions((prev) => ({
-                    ...prev,
-                    [store.id]: { x: rawX, y: rawY },
-                  }));
-
-                  updateStore.mutate({ id: store.id, x: rawX, y: rawY });
-                  window.setTimeout(() => {
-                    isDraggingRef.current = false;
-                  }, 0);
-                }}
-                style={!isInteractive ? { cursor: onStoreClick ? "pointer" : "default" } : undefined}
-                animate={
-                  isInteractive
-                    ? positions[store.id] ?? { x: store.x, y: store.y }
-                    : store.x !== 0 || store.y !== 0
-                      ? { x: store.x, y: store.y }
-                      : fallbackPositions[store.id] ?? { x: 0, y: 0 }
-                }
-                className="inline-block"
-              >
-                {isInteractive && (
-                  <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRequestDeleteStore?.(store, bookedCount);
-                      }}
-                      className="p-1 bg-destructive text-destructive-foreground rounded hover:bg-destructive/80"
-                      title="Delete store"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                )}
-
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <div
-                      onClick={(e) => {
-                        if (isDraggingRef.current) {
-                          e.preventDefault();
+                  className="inline-block"
+                >
+                  {isInteractive && (
+                    <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
                           e.stopPropagation();
-                          return;
-                        }
-                        onStoreClick?.(store);
-                      }}
-                      className="inline-flex flex-col items-center justify-center h-full p-1 overflow-hidden cursor-pointer"
-                    >
-                      <StoreIcon
-                        className={`w-6 h-6 mb-1 opacity-80 ${hasPurchased ? "text-green-500" : hasMyReservation ? "text-blue-500" : hasOtherReservation ? "text-yellow-500" : "text-primary"}`}
-                      />
-                      <span className="font-semibold text-[10px] text-center px-1 truncate w-full">{store.name}</span>
-                      {hasPurchased && <Badge className="bg-green-500 text-[8px] h-3 px-1 mt-1">Booked {bookedCount}</Badge>}
-                      {hasMyReservation && <Badge className="bg-blue-500 text-[8px] h-3 px-1 mt-1">Reserved {myReservedCount}</Badge>}
+                          onRequestDeleteStore?.(store, bookedCount);
+                        }}
+                        className="p-1 bg-destructive text-destructive-foreground rounded hover:bg-destructive/80"
+                        title="Delete store"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </div>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 p-4">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-bold">{store.name}</h4>
-                        <Badge variant="outline">{store.type}</Badge>
-                      </div>
-                      <div className="text-xs space-y-2">
-                        <p className="font-medium">Products ({storeProducts.length})</p>
-                        <div className="max-h-32 overflow-auto space-y-1">
-                          {storeProducts.map((p) => (
-                            <div key={p.id} className="flex justify-between items-center bg-muted/50 p-1.5 rounded">
-                              <span>{p.name}</span>
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold">${p.price}</span>
-                                <div
-                                  className={`w-2 h-2 rounded-full ${p.status === "booked" ? "bg-green-500" : p.reservedById === currentUserId ? "bg-blue-500" : p.status === "reserved" ? "bg-yellow-500" : "bg-primary/20"}`}
-                                />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      {isInteractive && (
-                        <div className="flex gap-2 pt-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="flex-1 "
-                            onClick={() => updateStore.mutate({ id: store.id, x: 0, y: 0 })}
-                          >
-                            Remove
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="flex-1"
-                            onClick={() => onRequestDeleteStore?.(store, bookedCount)}
-                          >
-                            Delete Store
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </motion.div>
-            );
-          })}
+                  )}
 
-          {renderedStores.length === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <p className="text-muted-foreground font-display font-medium text-xl opacity-50">Empty Canvas</p>
-            </div>
-          )}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <div
+                        onClick={(e) => {
+                          if (isDraggingRef.current) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            return;
+                          }
+                          onStoreClick?.(store);
+                        }}
+                        className="inline-flex flex-col items-center justify-center h-full p-1 overflow-hidden cursor-pointer"
+                      >
+                        <StoreIcon
+                          className={`w-6 h-6 mb-1 opacity-80 ${hasPurchased ? "text-green-500" : hasMyReservation ? "text-blue-500" : hasOtherReservation ? "text-yellow-500" : "text-primary"}`}
+                        />
+                        <span className="font-semibold text-[10px] text-center px-1 truncate w-full">{store.name}</span>
+                        {hasPurchased && <Badge className="bg-green-500 text-[8px] h-3 px-1 mt-1">Booked {bookedCount}</Badge>}
+                        {hasMyReservation && <Badge className="bg-blue-500 text-[8px] h-3 px-1 mt-1">Reserved {myReservedCount}</Badge>}
+                      </div>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 p-4">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-bold">{store.name}</h4>
+                          <Badge variant="outline">{store.type}</Badge>
+                        </div>
+                        <div className="text-xs space-y-2">
+                          <p className="font-medium">Products ({storeProducts.length})</p>
+                          <div className="max-h-32 overflow-auto space-y-1">
+                            {storeProducts.map((p) => (
+                              <div key={p.id} className="flex justify-between items-center bg-muted/50 p-1.5 rounded">
+                                <span>{p.name}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold">${p.price}</span>
+                                  <div
+                                    className={`w-2 h-2 rounded-full ${p.status === "booked" ? "bg-green-500" : p.reservedById === currentUserId ? "bg-blue-500" : p.status === "reserved" ? "bg-yellow-500" : "bg-primary/20"}`}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {isInteractive && (
+                          <div className="flex gap-2 pt-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1 "
+                              onClick={() => updateStore.mutate({ id: store.id, x: 0, y: 0 })}
+                            >
+                              Remove
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => onRequestDeleteStore?.(store, bookedCount)}
+                            >
+                              Delete Store
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </motion.div>
+              );
+            })}
+
+            {renderedStores.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <p className="text-muted-foreground font-display font-medium text-xl opacity-50">Empty Canvas</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

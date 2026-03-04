@@ -36,7 +36,7 @@ type DemoData = {
 };
 
 const seedData: DemoData = {
-  eventSettings: { id: 1, width: 800, height: 600, shape: "rectangular" },
+  eventSettings: { id: 1, width: 1250, height: 600, shape: "fixed" },
   users: [
     { id: 1, name: "Event Organizer", role: "organizer" },
     { id: 2, name: "Demo User", role: "user" },

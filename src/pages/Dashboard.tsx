@@ -59,6 +59,10 @@ export default function Dashboard() {
     return products.find((p: any) => p.reservedById === simulatedUserId && p.status === 'reserved');
   }, [products, simulatedUserId]);
 
+  const visibleStores = useMemo(() => {
+    return stores.filter((store: any) => store.x !== 0 || store.y !== 0);
+  }, [stores]);
+
   const bookedCountByStoreId = useMemo(() => {
     const map = new Map<number, number>();
     products.forEach((product: any) => {
@@ -272,7 +276,7 @@ export default function Dashboard() {
                   </Card>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {stores.map((store: any) => {
+                    {visibleStores.map((store: any) => {
                       const storeProduct = primaryProductByStore.get(store.id);
                       const isOwnReservation = storeProduct?.reservedById === simulatedUserId;
                       const isOtherReservation = storeProduct?.status === "reserved" && !isOwnReservation;
@@ -290,10 +294,10 @@ export default function Dashboard() {
                               <Badge
                                 className={
                                   isMissingInventory ? "bg-muted text-muted-foreground" :
-                                  isBooked ? "bg-green-500 hover:bg-green-600" :
-                                    isOwnReservation ? "bg-blue-500 hover:bg-blue-600" :
-                                      isOtherReservation ? "bg-yellow-500 hover:bg-yellow-600" :
-                                        "bg-black"
+                                    isBooked ? "bg-green-500 hover:bg-green-600" :
+                                      isOwnReservation ? "bg-blue-500 hover:bg-blue-600" :
+                                        isOtherReservation ? "bg-yellow-500 hover:bg-yellow-600" :
+                                          "bg-black"
                                 }
                               >
                                 {isMissingInventory ? "Not Configured" : isBooked ? "Fully Booked" : isOwnReservation ? "In Your Cart" : isOtherReservation ? "In Process" : "Available"}
@@ -332,7 +336,7 @@ export default function Dashboard() {
                     {cartItem ? (
                       <div className="space-y-4">
                         <div className="p-3 bg-card rounded-lg border shadow-sm">
-                          <p className="font-semibold">{stores.find((s: any) => s.id === cartItem.storeId)?.name ?? cartItem.name}</p>
+                          <p className="font-semibold">{visibleStores.find((s: any) => s.id === cartItem.storeId)?.name ?? stores.find((s: any) => s.id === cartItem.storeId)?.name ?? cartItem.name}</p>
                           <p className="text-xs text-muted-foreground">{getReservationTimeLeft(cartItem.reservedAt)}</p>
                           <p className="mt-2 font-bold">${cartItem.price}</p>
                         </div>
@@ -394,7 +398,7 @@ export default function Dashboard() {
                     <div className="space-y-3">
                       {userPurchases.length > 0 ? (
                         userPurchases.map((p: any) => {
-                          const store = stores.find((entry: any) => entry.id === p.storeId);
+                          const store = visibleStores.find((entry: any) => entry.id === p.storeId) ?? stores.find((entry: any) => entry.id === p.storeId);
                           return (
                             <div key={p.id} className="flex items-center justify-between p-2 rounded bg-muted/50 text-xs">
                               <div>

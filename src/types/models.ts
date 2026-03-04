@@ -1,4 +1,4 @@
-export type Shape = "square" | "rectangular" | "circular";
+export type Shape = "fixed" | "circular";
 export type UserRole = "organizer" | "user";
 export type ProductStatus = "available" | "reserved" | "booked";
 

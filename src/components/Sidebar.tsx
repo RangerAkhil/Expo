@@ -19,6 +19,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+const FEET_TO_PIXELS = 10;
+
 type OrganizerSidebarProps = {
   stores: Store[];
   users: User[];
@@ -30,7 +32,7 @@ type OrganizerSidebarProps = {
 export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore, bookedCountByStoreId }: OrganizerSidebarProps) {
   const [isStoreOpen, setStoreOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
-  const [editFormData, setEditFormData] = useState({ name: "", type: "", cost: 0, width: 50, height: 50 });
+  const [editFormData, setEditFormData] = useState({ name: "", type: "", cost: 0, width: 5, height: 5 });
   const [isResetOpen, setResetOpen] = useState(false);
   const updateStore = useUpdateStore();
   const resetStore = useResetDemoStore();
@@ -92,7 +94,9 @@ export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore
                 <GripVertical className="w-4 h-4 text-muted-foreground" />
                 <div>
                   <div className="font-medium text-sm">{store.name}</div>
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{store.type} • {store.width}x{store.height}</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                    {store.type} | {(store.width / FEET_TO_PIXELS).toFixed(1)}x{(store.height / FEET_TO_PIXELS).toFixed(1)} SQ FT
+                  </div>
                 </div>
               </div>
               
@@ -107,8 +111,8 @@ export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore
                       name: store.name,
                       type: store.type,
                       cost: store.cost,
-                      width: store.width,
-                      height: store.height,
+                      width: Number((store.width / FEET_TO_PIXELS).toFixed(2)),
+                      height: Number((store.height / FEET_TO_PIXELS).toFixed(2)),
                     });
                   }}
                 >
@@ -149,8 +153,8 @@ export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore
                   name: editFormData.name,
                   type: editFormData.type,
                   cost: Number(editFormData.cost),
-                  width: Number(editFormData.width),
-                  height: Number(editFormData.height),
+                  width: Number(editFormData.width) * FEET_TO_PIXELS,
+                  height: Number(editFormData.height) * FEET_TO_PIXELS,
                 },
                 { onSuccess: () => setEditingStore(null) }
               );
@@ -170,11 +174,11 @@ export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore
                 <Input required type="number" value={editFormData.cost} onChange={(e) => setEditFormData({ ...editFormData, cost: Number(e.target.value) })} />
               </div>
               <div className="space-y-2">
-                <Label>Width</Label>
+                <Label>Width (sq ft)</Label>
                 <Input required type="number" value={editFormData.width} onChange={(e) => setEditFormData({ ...editFormData, width: Number(e.target.value) })} />
               </div>
               <div className="space-y-2">
-                <Label>Height</Label>
+                <Label>Height (sq ft)</Label>
                 <Input required type="number" value={editFormData.height} onChange={(e) => setEditFormData({ ...editFormData, height: Number(e.target.value) })} />
               </div>
             </div>

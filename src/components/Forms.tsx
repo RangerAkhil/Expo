@@ -8,10 +8,12 @@ import { useCreateUser } from "@/hooks/use-users";
 import { useUpdateEventSettings } from "@/hooks/use-event-settings";
 import type { EventSettings, Shape, UserRole } from "@/types/models";
 
+const FEET_TO_PIXELS = 10;
+
 export function StoreForm({ onSuccess }: { onSuccess: () => void }) {
   const createStore = useCreateStore();
   const [formData, setFormData] = useState({
-    name: "", type: "", cost: 0, width: 50, height: 50
+    name: "", type: "", cost: 0, width: 5, height: 5
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -20,8 +22,8 @@ export function StoreForm({ onSuccess }: { onSuccess: () => void }) {
       ...formData,
       x: 0, y: 0,
       cost: Number(formData.cost),
-      width: Number(formData.width),
-      height: Number(formData.height)
+      width: Number(formData.width) * FEET_TO_PIXELS,
+      height: Number(formData.height) * FEET_TO_PIXELS
     }, { onSuccess });
   };
 
@@ -41,11 +43,11 @@ export function StoreForm({ onSuccess }: { onSuccess: () => void }) {
           <Input required type="number" value={formData.cost} onChange={e => setFormData({ ...formData, cost: Number(e.target.value) })} />
         </div>
         <div className="space-y-2">
-          <Label>Width (px)</Label>
+          <Label>Width (sq ft)</Label>
           <Input required type="number" value={formData.width} onChange={e => setFormData({ ...formData, width: Number(e.target.value) })} />
         </div>
         <div className="space-y-2">
-          <Label>Height (px)</Label>
+          <Label>Height (sq ft)</Label>
           <Input required type="number" value={formData.height} onChange={e => setFormData({ ...formData, height: Number(e.target.value) })} />
         </div>
       </div>

@@ -1,12 +1,23 @@
-import { GripVertical, Plus, Users } from "lucide-react";
+import { GripVertical, Plus, RotateCcw, Users } from "lucide-react";
 import type { Store, User, EventSettings } from "@/types/models";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { StoreForm, EventSettingsForm } from "./Forms";
-import { useUpdateStore } from "@/hooks/use-stores";
+import { useResetDemoStore, useUpdateStore } from "@/hooks/use-stores";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type OrganizerSidebarProps = {
   stores: Store[];
@@ -20,7 +31,10 @@ export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore
   const [isStoreOpen, setStoreOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [editFormData, setEditFormData] = useState({ name: "", type: "", cost: 0, width: 50, height: 50 });
+  const [isResetOpen, setResetOpen] = useState(false);
   const updateStore = useUpdateStore();
+  const resetStore = useResetDemoStore();
+  const { toast } = useToast();
 
   const unplacedStores = stores.filter(s => s.x === 0 && s.y === 0);
 
@@ -29,6 +43,19 @@ export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore
       <div className="bg-card rounded-2xl p-5 border shadow-sm flex flex-col gap-4">
         <h2 className="font-display font-bold text-lg border-b pb-2">Event Settings</h2>
         <EventSettingsForm currentSettings={settings} />
+        <div className="flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-destructive">Reset All Data:</span>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            disabled={resetStore.isPending}
+            onClick={() => setResetOpen(true)}
+          >
+            <RotateCcw className="w-4 h-4 mr-2" />
+            {resetStore.isPending ? "Resetting..." : "Reset"}
+          </Button>
+        </div>
       </div>
 
       <div className="bg-card rounded-2xl p-5 border shadow-sm flex flex-col gap-4 flex-1">
@@ -157,6 +184,43 @@ export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore
           </form>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={isResetOpen} onOpenChange={setResetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset All Data</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will clear local storage and reset all organizer/user demo data. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetStore.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90"
+              disabled={resetStore.isPending}
+              onClick={() => {
+                resetStore.mutate({
+                  onSuccess: () => {
+                    setResetOpen(false);
+                    toast({
+                      title: "Reset all data successful",
+                      description: "All local demo data has been reset.",
+                    });
+                  },
+                  onError: () => {
+                    toast({
+                      title: "Reset failed",
+                      description: "Could not clear local storage.",
+                      variant: "destructive",
+                    });
+                  },
+                });
+              }}
+            >
+              {resetStore.isPending ? "Resetting..." : "Reset"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="bg-card rounded-2xl p-5 border shadow-sm">
         <div className="flex items-center justify-between border-b pb-2 mb-4">

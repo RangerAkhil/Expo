@@ -314,6 +314,13 @@ export function deleteStore(id: number): void {
   writeData(next);
 }
 
+export function resetDemoStore(): void {
+  const storage = ensureBrowser();
+  if (!storage) return;
+  storage.removeItem(STORAGE_KEY);
+  emitChange();
+}
+
 export function getProducts(): Product[] {
   return getOrCreateSnapshot("products", () => readData().products.map(deserializeProduct));
 }

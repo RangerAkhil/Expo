@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { HTMLMotionProps, motion } from "framer-motion";
 import { Store as StoreIcon, Trash2 } from "lucide-react";
 import type { EventSettings, Store, Product } from "@/types/models";
 import { useUpdateStore } from "@/hooks/use-stores";
@@ -33,7 +33,7 @@ export function GroundLayout({
   const [positions, setPositions] = React.useState<Record<number, { x: number; y: number }>>({});
   const [scale, setScale] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
-  const isPanningRef = React.useRef(false);
+  const [isPanning, setIsPanning] = React.useState(false);
   const lastMouse = React.useRef({ x: 0, y: 0 });
   const panStartRef = React.useRef<{ x: number; y: number } | null>(null);
 
@@ -149,7 +149,7 @@ export function GroundLayout({
   };
 
   const handleMouseUp = () => {
-    isPanningRef.current = false;
+    setIsPanning(false);
     panStartRef.current = null;
   };
 
@@ -160,9 +160,9 @@ export function GroundLayout({
     const dyTotal = e.clientY - panStartRef.current.y;
 
     // start panning only after small movement
-    if (!isPanningRef.current) {
+    if (!isPanning) {
       if (Math.abs(dxTotal) < 5 && Math.abs(dyTotal) < 5) return;
-      isPanningRef.current = true;
+      setIsPanning(true);
     }
 
     const dx = e.clientX - lastMouse.current.x;
@@ -235,21 +235,24 @@ export function GroundLayout({
               const hasPurchased = bookedCount > 0;
               const hasMyReservation = myReservedCount > 0;
               const hasOtherReservation = otherReservedCount > 0;
+              const MotionDiv = motion.div as React.FC<HTMLMotionProps<"div">>;
 
               return (
-                <motion.div
+                <MotionDiv
                   data-store
                   key={store.id}
-                  drag={isInteractive && !isPanningRef.current}
+                  drag={isInteractive && !isPanning}
                   dragListener={isInteractive}
                   dragMomentum={false}
                   dragElastic={0}
                   transition={{ duration: 0 }}
-                  onPointerDown={(e) => {
+                  onTapStart={(e) => {
                     if (isInteractive) e.stopPropagation();
                   }}
                   onDragStart={() => {
                     isDraggingRef.current = true;
+                    panStartRef.current = null;
+                    setIsPanning(false);
                   }}
                   onDragEnd={(_, info) => {
                     if (!isInteractive || !containerRef.current) return;
@@ -285,13 +288,14 @@ export function GroundLayout({
                       isDraggingRef.current = false;
                     }, 0);
                   }}
-                  style={!isInteractive ? { cursor: onStoreClick ? "pointer" : "default" } : undefined}
-                  animate={
+                  style={{
+                    cursor: !isInteractive ? (onStoreClick ? "pointer" : "default") : undefined,
+                    display: 'inline-block',
+                  }} animate={
                     isInteractive
                       ? positions[store.id] ?? { x: store.x, y: store.y }
                       : { x: store.x, y: store.y }
                   }
-                  className="inline-block"
                 >
                   {isInteractive && (
                     <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -374,7 +378,7 @@ export function GroundLayout({
                       </div>
                     </PopoverContent>
                   </Popover>
-                </motion.div>
+                </MotionDiv>
               );
             })}
 

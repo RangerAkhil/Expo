@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 import type { InsertStore, UpdateStoreRequest } from "@/types/models";
-import { createStore, deleteStore, getStores, subscribeDemoStore, updateStore } from "@/lib/demo-store";
+import { createStore, deleteStore, getStores, resetDemoStore, subscribeDemoStore, updateStore } from "@/lib/demo-store";
 
 export function useStores() {
   const data = useSyncExternalStore(subscribeDemoStore, getStores, getStores);
@@ -54,6 +54,24 @@ export function useDeleteStore() {
       try {
         setIsPending(true);
         deleteStore(id);
+        opts?.onSuccess?.();
+      } catch (error) {
+        opts?.onError?.(error);
+      } finally {
+        setIsPending(false);
+      }
+    },
+  };
+}
+
+export function useResetDemoStore() {
+  const [isPending, setIsPending] = useState(false);
+  return {
+    isPending,
+    mutate: (opts?: { onSuccess?: () => void; onError?: (error: unknown) => void }) => {
+      try {
+        setIsPending(true);
+        resetDemoStore();
         opts?.onSuccess?.();
       } catch (error) {
         opts?.onError?.(error);

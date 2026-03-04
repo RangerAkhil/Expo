@@ -309,6 +309,7 @@ export function deleteStore(id: number): void {
     ...current,
     stores: current.stores.filter((store) => store.id !== id),
     products: current.products.filter((product) => product.storeId !== id),
+    purchases: current.purchases.filter((purchase) => purchase.storeId !== id),
   };
   writeData(next);
 }

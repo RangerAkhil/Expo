@@ -3,12 +3,23 @@ import type { Store, User, EventSettings } from "@/types/models";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { StoreForm, EventSettingsForm } from "./Forms";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useUpdateStore } from "@/hooks/use-stores";
 import { useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
-export function OrganizerSidebar({ stores, users, settings }: { stores: Store[], users: User[], settings: EventSettings }) {
+type OrganizerSidebarProps = {
+  stores: Store[];
+  users: User[];
+  settings: EventSettings;
+  onRequestDeleteStore: (store: Store, bookedCount: number) => void;
+  bookedCountByStoreId: Map<number, number>;
+};
+
+export function OrganizerSidebar({ stores, users, settings, onRequestDeleteStore, bookedCountByStoreId }: OrganizerSidebarProps) {
   const [isStoreOpen, setStoreOpen] = useState(false);
+  const [editingStore, setEditingStore] = useState<Store | null>(null);
+  const [editFormData, setEditFormData] = useState({ name: "", type: "", cost: 0, width: 50, height: 50 });
   const updateStore = useUpdateStore();
 
   const unplacedStores = stores.filter(s => s.x === 0 && s.y === 0);
@@ -58,24 +69,32 @@ export function OrganizerSidebar({ stores, users, settings }: { stores: Store[],
                 </div>
               </div>
               
-              <div className="w-32" onClick={(e) => e.stopPropagation()}>
-                <Select 
-                  value={store.assignedUserId ? store.assignedUserId.toString() : "unassigned"} 
-                  onValueChange={(val) => {
-                    const userId = val === "unassigned" ? null : parseInt(val);
-                    updateStore.mutate({ id: store.id, assignedUserId: userId });
+              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+                    setEditingStore(store);
+                    setEditFormData({
+                      name: store.name,
+                      type: store.type,
+                      cost: store.cost,
+                      width: store.width,
+                      height: store.height,
+                    });
                   }}
                 >
-                  <SelectTrigger className="h-7 text-xs">
-                    <SelectValue placeholder="Assign User" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="unassigned" className="text-muted-foreground italic">Unassigned</SelectItem>
-                    {users.map(u => (
-                      <SelectItem key={u.id} value={u.id.toString()}>{u.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => onRequestDeleteStore(store, bookedCountByStoreId.get(store.id) ?? 0)}
+                >
+                  Delete
+                </Button>
               </div>
             </div>
           ))}
@@ -86,6 +105,58 @@ export function OrganizerSidebar({ stores, users, settings }: { stores: Store[],
           )}
         </div>
       </div>
+
+      <Dialog open={!!editingStore} onOpenChange={(open) => { if (!open) setEditingStore(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Store</DialogTitle>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!editingStore) return;
+              updateStore.mutate(
+                {
+                  id: editingStore.id,
+                  name: editFormData.name,
+                  type: editFormData.type,
+                  cost: Number(editFormData.cost),
+                  width: Number(editFormData.width),
+                  height: Number(editFormData.height),
+                },
+                { onSuccess: () => setEditingStore(null) }
+              );
+            }}
+          >
+            <div className="space-y-2">
+              <Label>Store Name</Label>
+              <Input required value={editFormData.name} onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Type</Label>
+              <Input required value={editFormData.type} onChange={(e) => setEditFormData({ ...editFormData, type: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Cost ($)</Label>
+                <Input required type="number" value={editFormData.cost} onChange={(e) => setEditFormData({ ...editFormData, cost: Number(e.target.value) })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Width</Label>
+                <Input required type="number" value={editFormData.width} onChange={(e) => setEditFormData({ ...editFormData, width: Number(e.target.value) })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Height</Label>
+                <Input required type="number" value={editFormData.height} onChange={(e) => setEditFormData({ ...editFormData, height: Number(e.target.value) })} />
+              </div>
+            </div>
+            <Button type="submit" className="w-full" disabled={updateStore.isPending}>
+              {updateStore.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <div className="bg-card rounded-2xl p-5 border shadow-sm">
         <div className="flex items-center justify-between border-b pb-2 mb-4">

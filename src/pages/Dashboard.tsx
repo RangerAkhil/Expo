@@ -1,6 +1,6 @@
 import { useRole } from "@/hooks/use-role";
 import { useEventSettings } from "@/hooks/use-event-settings";
-import { useStores } from "@/hooks/use-stores";
+import { useDeleteStore, useStores } from "@/hooks/use-stores";
 import { useUsers } from "@/hooks/use-users";
 import { useProducts, usePurchaseProduct, useReleaseProduct, useReserveProduct, useUserPurchases } from "@/hooks/use-marketplace";
 import { GroundLayout } from "@/components/GroundLayout";
@@ -12,6 +12,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function Dashboard() {
   const { isOrganizer, isUser, role } = useRole();
@@ -29,10 +39,34 @@ export default function Dashboard() {
   const reserveMutation = useReserveProduct();
   const purchaseMutation = usePurchaseProduct();
   const releaseMutation = useReleaseProduct();
+  const deleteStoreMutation = useDeleteStore();
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; bookedCount: number } | null>(null);
+
+  const primaryProductByStore = useMemo(() => {
+    const map = new Map<number, any>();
+    stores.forEach((store: any) => {
+      const relatedProducts = products
+        .filter((product: any) => product.storeId === store.id)
+        .sort((a: any, b: any) => a.id - b.id);
+      if (relatedProducts.length > 0) {
+        map.set(store.id, relatedProducts[0]);
+      }
+    });
+    return map;
+  }, [products, stores]);
 
   const cartItem = useMemo(() => {
     return products.find((p: any) => p.reservedById === simulatedUserId && p.status === 'reserved');
   }, [products, simulatedUserId]);
+
+  const bookedCountByStoreId = useMemo(() => {
+    const map = new Map<number, number>();
+    products.forEach((product: any) => {
+      if (product.status !== "booked") return;
+      map.set(product.storeId, (map.get(product.storeId) ?? 0) + 1);
+    });
+    return map;
+  }, [products]);
 
   const getReservationTimeLeft = (reservedAt: Date | null) => {
     if (!reservedAt) return "Reserved";
@@ -52,24 +86,20 @@ export default function Dashboard() {
       return;
     }
 
-    const storeProducts = products.filter((product: any) => product.storeId === storeId);
-    if (storeProducts.length === 0) {
-      toast({ title: storeName, description: "No products available in this store." });
+    const storeProduct = primaryProductByStore.get(storeId);
+    if (!storeProduct) {
+      toast({ title: storeName, description: "Store is not configured for booking yet." });
       return;
     }
 
-    const usersReservedProduct = storeProducts.find(
-      (product: any) => product.status === "reserved" && product.reservedById === simulatedUserId
-    );
-
-    if (usersReservedProduct) {
+    if (storeProduct.status === "reserved" && storeProduct.reservedById === simulatedUserId) {
       purchaseMutation.mutate(
-        { productId: usersReservedProduct.id, userId: simulatedUserId },
+        { productId: storeProduct.id, userId: simulatedUserId },
         {
           onSuccess: () => {
             toast({
               title: "Purchase complete",
-              description: `${usersReservedProduct.name} booked successfully.`,
+              description: `${storeName} booked successfully.`,
             });
           },
           onError: () => {
@@ -84,34 +114,69 @@ export default function Dashboard() {
       return;
     }
 
-    const firstAvailableProduct = storeProducts.find((product: any) => product.status === "available");
-    if (!firstAvailableProduct) {
+    if (cartItem && cartItem.storeId !== storeId) {
+      toast({
+        title: "One item at a time",
+        description: "Complete or remove your current cart item before selecting another.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (storeProduct.status !== "available") {
       toast({
         title: "Store not available",
-        description: "All items are reserved or booked right now.",
+        description: "This store is currently reserved or booked.",
         variant: "destructive",
       });
       return;
     }
 
     reserveMutation.mutate(
-      { productId: firstAvailableProduct.id, userId: simulatedUserId },
+      { productId: storeProduct.id, userId: simulatedUserId },
       {
         onSuccess: () => {
           toast({
             title: "Added to cart",
-            description: `${firstAvailableProduct.name} reserved for 30 minutes.`,
+            description: `${storeName} reserved for 30 minutes.`,
           });
         },
         onError: () => {
           toast({
             title: "Reservation failed",
-            description: "Item is reserved or booked by another user.",
+            description: "Store is reserved or booked by another user.",
             variant: "destructive",
           });
         },
       }
     );
+  };
+
+  const handleRequestDeleteStore = (store: any, bookedCount: number) => {
+    setDeleteTarget({ id: store.id, name: store.name, bookedCount });
+  };
+
+  const handleConfirmDeleteStore = () => {
+    if (!deleteTarget) return;
+    deleteStoreMutation.mutate(deleteTarget.id, {
+      onSuccess: () => {
+        toast({
+          title: "Store deleted",
+          description:
+            deleteTarget.bookedCount > 0
+              ? "Store and related purchase history were removed."
+              : "Store removed successfully.",
+        });
+        setDeleteTarget(null);
+      },
+      onError: () => {
+        toast({
+          title: "Delete failed",
+          description: "Unable to delete this store.",
+          variant: "destructive",
+        });
+      },
+    });
   };
 
   if (loadingSettings || loadingStores || loadingUsers) {
@@ -139,9 +204,21 @@ export default function Dashboard() {
             </div>
 
             <div className="flex flex-col lg:flex-row gap-6 items-start">
-              <OrganizerSidebar stores={stores} users={users} settings={activeSettings} />
+              <OrganizerSidebar
+                stores={stores}
+                users={users}
+                settings={activeSettings}
+                bookedCountByStoreId={bookedCountByStoreId}
+                onRequestDeleteStore={handleRequestDeleteStore}
+              />
               <div className="flex-1 w-full min-w-0">
-                <GroundLayout settings={activeSettings} stores={stores} />
+                <GroundLayout
+                  settings={activeSettings}
+                  stores={stores}
+                  allProducts={products}
+                  currentUserId={simulatedUserId}
+                  onRequestDeleteStore={handleRequestDeleteStore}
+                />
               </div>
             </div>
           </div>
@@ -179,7 +256,7 @@ export default function Dashboard() {
                   <Card className="p-6">
                     <CardHeader className="px-0 pt-0">
                       <CardTitle>Floor Plan</CardTitle>
-                      <CardDescription>Click on a store to view its products</CardDescription>
+                      <CardDescription>Click on a store to reserve/purchase it</CardDescription>
                     </CardHeader>
                     <GroundLayout
                       settings={activeSettings}
@@ -195,58 +272,44 @@ export default function Dashboard() {
                   </Card>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {products.map((product: any) => {
-                      const store = stores.find(s => s.id === product.storeId);
-                      const isOwnReservation = product.reservedById === simulatedUserId;
-                      const isOtherReservation = product.status === 'reserved' && !isOwnReservation;
-                      const isBooked = product.status === 'booked';
+                    {stores.map((store: any) => {
+                      const storeProduct = primaryProductByStore.get(store.id);
+                      const isOwnReservation = storeProduct?.reservedById === simulatedUserId;
+                      const isOtherReservation = storeProduct?.status === "reserved" && !isOwnReservation;
+                      const isBooked = storeProduct?.status === "booked";
+                      const isMissingInventory = !storeProduct;
 
                       return (
-                        <Card key={product.id} className="flex flex-col">
+                        <Card key={store.id} className="flex flex-col">
                           <CardHeader>
                             <div className="flex justify-between items-start">
                               <div>
-                                <CardTitle>{product.name}</CardTitle>
-                                <CardDescription>{store?.name}</CardDescription>
+                                <CardTitle>{store.name}</CardTitle>
+                                <CardDescription>{store.type}</CardDescription>
                               </div>
                               <Badge
                                 className={
+                                  isMissingInventory ? "bg-muted text-muted-foreground" :
                                   isBooked ? "bg-green-500 hover:bg-green-600" :
                                     isOwnReservation ? "bg-blue-500 hover:bg-blue-600" :
                                       isOtherReservation ? "bg-yellow-500 hover:bg-yellow-600" :
                                         "bg-black"
                                 }
                               >
-                                {isBooked ? "Fully Booked" : isOwnReservation ? "In Your Cart" : isOtherReservation ? "In Process" : "Available"}
+                                {isMissingInventory ? "Not Configured" : isBooked ? "Fully Booked" : isOwnReservation ? "In Your Cart" : isOtherReservation ? "In Process" : "Available"}
                               </Badge>
                             </div>
                           </CardHeader>
                           <CardContent className="flex-1">
-                            <p className="text-sm text-muted-foreground mb-4">{product.description}</p>
+                            <p className="text-sm text-muted-foreground mb-4">Book this store for your event slot.</p>
                             <div className="flex items-center justify-between">
-                              <span className="text-lg font-bold">${product.price}</span>
+                              <span className="text-lg font-bold">${store.cost}</span>
                               <Button
-                                disabled={isBooked || (product.status === 'reserved' && !isOwnReservation) || (!isOwnReservation && !!cartItem) || !simulatedUserId}
-                                onClick={() =>
-                                  reserveMutation.mutate(
-                                    { productId: product.id, userId: simulatedUserId as number },
-                                    {
-                                      onSuccess: () => {
-                                        toast({ title: "Added to cart", description: "Item reserved for 30 minutes." });
-                                      },
-                                      onError: () => {
-                                        toast({
-                                          title: "Reservation failed",
-                                          description: "Item is reserved or booked by another user.",
-                                          variant: "destructive",
-                                        });
-                                      },
-                                    }
-                                  )
-                                }
+                                disabled={isMissingInventory || isBooked || isOtherReservation || (!isOwnReservation && !!cartItem) || !simulatedUserId}
+                                onClick={() => handleUserStoreClick(store.id, store.name)}
                                 size="sm"
                               >
-                                {isOwnReservation ? "Already in Cart" : "Add to Cart"}
+                                {isOwnReservation ? "Complete Purchase" : "Add to Cart"}
                               </Button>
                             </div>
                           </CardContent>
@@ -269,7 +332,7 @@ export default function Dashboard() {
                     {cartItem ? (
                       <div className="space-y-4">
                         <div className="p-3 bg-card rounded-lg border shadow-sm">
-                          <p className="font-semibold">{cartItem.name}</p>
+                          <p className="font-semibold">{stores.find((s: any) => s.id === cartItem.storeId)?.name ?? cartItem.name}</p>
                           <p className="text-xs text-muted-foreground">{getReservationTimeLeft(cartItem.reservedAt)}</p>
                           <p className="mt-2 font-bold">${cartItem.price}</p>
                         </div>
@@ -280,7 +343,7 @@ export default function Dashboard() {
                                 { productId: cartItem.id, userId: simulatedUserId as number },
                                 {
                                   onSuccess: () => {
-                                    toast({ title: "Purchase complete", description: "Item booked successfully." });
+                                    toast({ title: "Purchase complete", description: "Store booked successfully." });
                                   },
                                   onError: () => {
                                     toast({
@@ -303,7 +366,7 @@ export default function Dashboard() {
                                 { productId: cartItem.id, userId: simulatedUserId as number },
                                 {
                                   onSuccess: () => {
-                                    toast({ title: "Removed from cart", description: "Item is available again." });
+                                    toast({ title: "Removed from cart", description: "Store is available again." });
                                   },
                                 }
                               )
@@ -331,11 +394,11 @@ export default function Dashboard() {
                     <div className="space-y-3">
                       {userPurchases.length > 0 ? (
                         userPurchases.map((p: any) => {
-                          const product = products.find((prod: any) => prod.id === p.productId);
+                          const store = stores.find((entry: any) => entry.id === p.storeId);
                           return (
                             <div key={p.id} className="flex items-center justify-between p-2 rounded bg-muted/50 text-xs">
                               <div>
-                                <p className="font-medium">{product?.name || "Product"}</p>
+                                <p className="font-medium">{store?.name || "Store"}</p>
                                 <p className="text-[10px] text-muted-foreground">
                                   {new Date(p.purchasedAt).toLocaleDateString()}
                                 </p>
@@ -375,6 +438,28 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Store</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.bookedCount
+                ? `"${deleteTarget.name}" has ${deleteTarget.bookedCount} booked record(s). Deleting it will also remove those purchased entries from user history.`
+                : `Delete "${deleteTarget?.name}"?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteStoreMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDeleteStore}
+              className="bg-destructive hover:bg-destructive/90"
+              disabled={deleteStoreMutation.isPending}
+            >
+              {deleteStoreMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useMemo } from "react";
+import { useRef, useState, useCallback, useMemo, useEffect } from "react";
 import { useThree } from "@react-three/fiber";
 import { Text } from "@react-three/drei";
 import * as THREE from "three";
@@ -60,6 +60,7 @@ export function BoothMesh({
   const groupRef = useRef<THREE.Group>(null);
   const dragging = useRef(false);
   const dragOffset = useRef<[number, number]>([0, 0]);
+  const activePointerId = useRef<number | null>(null);
   const { camera, gl, invalidate } = useThree();
 
   const colors = STATUS_COLORS[status] ?? STATUS_COLORS.available;
@@ -128,50 +129,22 @@ export function BoothMesh({
     [otherStores, store.id, w, d, canvasWidth, canvasHeight],
   );
 
-  const handlePointerDown = useCallback(
-    (e: THREE.Event & { stopPropagation: () => void; nativeEvent: PointerEvent }) => {
-      if (!isDraggable) return;
-      if (e.nativeEvent.button !== 0) return; // left-click only
-      e.stopPropagation();
+  const getPointerIntersection = useCallback(
+    (clientX: number, clientY: number) => {
+      const rect = gl.domElement.getBoundingClientRect();
+      const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
 
-      dragging.current = true;
-      onDragStart?.();
-
-      if (controlsRef.current) controlsRef.current.enabled = false;
-
-      raycaster.setFromCamera(
-        new THREE.Vector2(
-          (e.nativeEvent.offsetX / gl.domElement.clientWidth) * 2 - 1,
-          -(e.nativeEvent.offsetY / gl.domElement.clientHeight) * 2 + 1,
-        ),
-        camera,
-      );
-      raycaster.ray.intersectPlane(groundPlane, intersectPoint);
-      const group = groupRef.current;
-      if (group) {
-        dragOffset.current = [
-          group.position.x - intersectPoint.x,
-          group.position.z - intersectPoint.z,
-        ];
-      }
-
-      (e.nativeEvent.target as HTMLElement)?.setPointerCapture?.(e.nativeEvent.pointerId);
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+      return raycaster.ray.intersectPlane(groundPlane, intersectPoint);
     },
-    [isDraggable, camera, gl, controlsRef, onDragStart],
+    [camera, gl],
   );
 
-  const handlePointerMove = useCallback(
-    (e: THREE.Event & { nativeEvent: PointerEvent }) => {
-      if (!dragging.current || !groupRef.current) return;
-
-      raycaster.setFromCamera(
-        new THREE.Vector2(
-          (e.nativeEvent.offsetX / gl.domElement.clientWidth) * 2 - 1,
-          -(e.nativeEvent.offsetY / gl.domElement.clientHeight) * 2 + 1,
-        ),
-        camera,
-      );
-      raycaster.ray.intersectPlane(groundPlane, intersectPoint);
+  const updateDragPosition = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!groupRef.current) return;
+      if (!getPointerIntersection(clientX, clientY)) return;
 
       const newX = intersectPoint.x + dragOffset.current[0];
       const newZ = intersectPoint.z + dragOffset.current[1];
@@ -181,42 +154,103 @@ export function BoothMesh({
       setOverlapping(checkDragOverlap(newX, newZ));
       invalidate();
     },
-    [camera, gl, invalidate, checkDragOverlap],
+    [getPointerIntersection, invalidate, checkDragOverlap],
+  );
+
+  const finishDrag = useCallback(() => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    activePointerId.current = null;
+    setOverlapping(false);
+
+    if (controlsRef.current) controlsRef.current.enabled = true;
+
+    const group = groupRef.current;
+    if (!group) return;
+
+    const pixel = worldToPixel(group.position.x, group.position.z, canvasWidth, canvasHeight);
+    const rawX = pixel.x - w / 2;
+    const rawY = pixel.y - d / 2;
+
+    const isOutside =
+      rawX + w * 0.5 < 0 ||
+      rawY + d * 0.5 < 0 ||
+      rawX + w * 0.5 > canvasWidth ||
+      rawY + d * 0.5 > canvasHeight;
+
+    if (isOutside) {
+      onDragEnd(store.id, 0, 0);
+    } else {
+      const sx = snapToGrid(Math.max(0, Math.min(canvasWidth - w, rawX)));
+      const sy = snapToGrid(Math.max(0, Math.min(canvasHeight - d, rawY)));
+      onDragEnd(store.id, sx, sy);
+    }
+
+    invalidate();
+  }, [controlsRef, canvasWidth, canvasHeight, w, d, store.id, onDragEnd, invalidate]);
+
+  useEffect(() => {
+    const handleWindowPointerMove = (event: PointerEvent) => {
+      if (!dragging.current) return;
+      if (activePointerId.current !== null && event.pointerId !== activePointerId.current) return;
+      updateDragPosition(event.clientX, event.clientY);
+    };
+
+    const handleWindowPointerUp = (event: PointerEvent) => {
+      if (!dragging.current) return;
+      if (activePointerId.current !== null && event.pointerId !== activePointerId.current) return;
+      finishDrag();
+    };
+
+    const doc = gl.domElement.ownerDocument;
+    doc.addEventListener("pointermove", handleWindowPointerMove);
+    doc.addEventListener("pointerup", handleWindowPointerUp);
+    doc.addEventListener("pointercancel", handleWindowPointerUp);
+
+    return () => {
+      doc.removeEventListener("pointermove", handleWindowPointerMove);
+      doc.removeEventListener("pointerup", handleWindowPointerUp);
+      doc.removeEventListener("pointercancel", handleWindowPointerUp);
+    };
+  }, [gl, updateDragPosition, finishDrag]);
+
+  const handlePointerDown = useCallback(
+    (e: THREE.Event & { stopPropagation: () => void; nativeEvent: PointerEvent }) => {
+      if (!isDraggable) return;
+      if (e.nativeEvent.button !== 0) return; // left-click only
+      e.stopPropagation();
+
+      dragging.current = true;
+      activePointerId.current = e.nativeEvent.pointerId;
+      onDragStart?.();
+
+      if (controlsRef.current) controlsRef.current.enabled = false;
+      const group = groupRef.current;
+      if (group && getPointerIntersection(e.nativeEvent.clientX, e.nativeEvent.clientY)) {
+        dragOffset.current = [group.position.x - intersectPoint.x, group.position.z - intersectPoint.z];
+      }
+
+      (e.nativeEvent.target as HTMLElement)?.setPointerCapture?.(e.nativeEvent.pointerId);
+    },
+    [isDraggable, controlsRef, onDragStart, getPointerIntersection],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: THREE.Event & { nativeEvent: PointerEvent }) => {
+      if (!dragging.current || !groupRef.current) return;
+      updateDragPosition(e.nativeEvent.clientX, e.nativeEvent.clientY);
+    },
+    [updateDragPosition],
   );
 
   const handlePointerUp = useCallback(
     (e: THREE.Event & { nativeEvent: PointerEvent }) => {
       if (!dragging.current) return;
-      dragging.current = false;
-      setOverlapping(false);
-
-      if (controlsRef.current) controlsRef.current.enabled = true;
 
       (e.nativeEvent.target as HTMLElement)?.releasePointerCapture?.(e.nativeEvent.pointerId);
-
-      const group = groupRef.current;
-      if (!group) return;
-
-      const pixel = worldToPixel(group.position.x, group.position.z, canvasWidth, canvasHeight);
-      const rawX = pixel.x - w / 2;
-      const rawY = pixel.y - d / 2;
-
-      const isOutside =
-        rawX + w * 0.5 < 0 ||
-        rawY + d * 0.5 < 0 ||
-        rawX + w * 0.5 > canvasWidth ||
-        rawY + d * 0.5 > canvasHeight;
-
-      if (isOutside) {
-        onDragEnd(store.id, 0, 0);
-      } else {
-        const sx = snapToGrid(Math.max(0, Math.min(canvasWidth - w, rawX)));
-        const sy = snapToGrid(Math.max(0, Math.min(canvasHeight - d, rawY)));
-        onDragEnd(store.id, sx, sy);
-      }
-      invalidate();
+      finishDrag();
     },
-    [controlsRef, canvasWidth, canvasHeight, w, d, store.id, onDragEnd, invalidate],
+    [finishDrag],
   );
 
   const handleClick = useCallback(

@@ -24,6 +24,7 @@ export type Store = {
   y: number;
   width: number;
   height: number;
+  rotation: number; // degrees: 0, 90, 180, 270
   assignedUserId: number | null;
 };
 
@@ -61,9 +62,35 @@ export type InsertStore = {
   y?: number;
   width?: number;
   height?: number;
+  rotation?: number;
   assignedUserId?: number | null;
 };
 
 export type UpdateStoreRequest = Partial<InsertStore>;
 export type UpdateEventSettingsRequest = Partial<Omit<EventSettings, "id">>;
+
+export type FurnitureKind = "stairs" | "lobby" | "screen" | "pillar" | "bench" | "table" | "stage" | "barrier" | "registration" | "restroom" | "exit" | "column" | "wall";
+
+export type Furniture = {
+  id: number;
+  name: string;
+  kind: FurnitureKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+};
+
+export type InsertFurniture = {
+  name: string;
+  kind: FurnitureKind;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
+};
+
+export type UpdateFurnitureRequest = Partial<InsertFurniture>;
 

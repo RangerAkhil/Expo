@@ -1,4 +1,4 @@
-import { Map, Zap } from "lucide-react";
+import { Building2, Shield, User, Zap } from "lucide-react";
 import { useRole } from "@/hooks/use-role";
 import { Button } from "@/components/ui/button";
 
@@ -10,11 +10,16 @@ export function Header() {
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2 text-primary">
           <div className="bg-primary/10 p-2 rounded-xl">
-            <Map className="w-6 h-6" />
+            <Building2 className="w-6 h-6" />
           </div>
-          <span className="font-display font-bold text-xl text-foreground tracking-tight">
-            EventScout
-          </span>
+          <div className="flex flex-col">
+            <span className="font-display font-bold text-xl text-foreground tracking-tight leading-tight">
+              EventScout
+            </span>
+            <span className="text-[10px] text-muted-foreground font-medium tracking-wider uppercase leading-tight">
+              Exhibition Management
+            </span>
+          </div>
         </div>
 
         <nav className="flex items-center gap-2 bg-secondary/50 p-1.5 rounded-2xl border border-border/50">
@@ -24,6 +29,7 @@ export function Header() {
             onClick={() => setRole("organizer")}
             className="rounded-xl transition-all duration-300"
           >
+            <Shield className="w-4 h-4 mr-1.5" />
             Organizer
           </Button>
           <Button
@@ -32,6 +38,7 @@ export function Header() {
             onClick={() => setRole("user")}
             className="rounded-xl transition-all duration-300"
           >
+            <User className="w-4 h-4 mr-1.5" />
             User
           </Button>
           <Button

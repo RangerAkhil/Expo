@@ -1,16 +1,19 @@
 import type {
   EventSettings,
+  Furniture,
+  InsertFurniture,
   InsertStore,
   InsertUser,
   Product,
   Purchase,
   Store,
   UpdateEventSettingsRequest,
+  UpdateFurnitureRequest,
   UpdateStoreRequest,
   User,
 } from "@/types/models";
 
-const STORAGE_KEY = "expo-org-demo-store-v1";
+const STORAGE_KEY = "expo-org-demo-store-v2";
 const CHANGE_EVENT = "expo-org-demo-store-changed";
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000;
 
@@ -28,63 +31,179 @@ type DemoData = {
   stores: Store[];
   products: SerializedProduct[];
   purchases: SerializedPurchase[];
+  furniture: Furniture[];
   nextIds: {
     store: number;
     product: number;
     purchase: number;
+    furniture: number;
   };
 };
 
+// ═══════════════════════════════════════════════════════════════════════
+// REALISTIC EXHIBITION HALL LAYOUT — 1250 × 700 px (125 ft × 70 ft)
+//
+// Canvas layout (pixel coords, 10px = 1ft):
+//
+//   y=0    ┌──EXIT──┬────────── LIFT LOBBY ──────────┬──EXIT──┐
+//   y=50   │        │       MAIN ENTRANCE             │        │
+//   y=90   │        │     REGISTRATION DESKS          │        │
+//          │        │                                  │        │
+//   y=150  │  A1 A2 A3 A4    (aisle)    A5 A6 A7 A8  │        │  ROW A
+//   y=240  │                                          │        │
+//   y=310  │  B1 B2 B3 B4    (aisle)    B5 B6 B7 B8  │        │  ROW B
+//   y=400  │                                          │        │
+//   y=470  │  C1 C2 C3 C4    (aisle)    C5 C6 C7     │        │  ROW C
+//   y=550  │                                          │        │
+//   y=560  │  WC  ┌──── MAIN STAGE ────┐    F&B AREA │        │
+//   y=700  └──EXIT┴─────── PILLARS ────┴─────EXIT────┘
+// ═══════════════════════════════════════════════════════════════════════
+
 const seedData: DemoData = {
-  eventSettings: { id: 1, width: 1250, height: 600, shape: "fixed" },
+  eventSettings: { id: 1, width: 1250, height: 700, shape: "fixed" },
   users: [
     { id: 1, name: "Event Organizer", role: "organizer" },
     { id: 2, name: "Demo User", role: "user" },
   ],
   stores: [
-    { id: 1, name: "Unicorn", type: "Food", cost: 100, x: 100, y: 100, width: 120, height: 100, assignedUserId: 2 },
-    { id: 2, name: "Gold", type: "Merchandise", cost: 200, x: 300, y: 100, width: 120, height: 100, assignedUserId: 2 },
+    // ── ROW A — y=150, standard 80×80 booths ────────────────────────
+    // Left block (x starts at 60, gap 10px between booths)
+    { id: 1,  name: "Gourmet Bites",   type: "Food",        cost: 500,  x: 60,   y: 150, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 2,  name: "TechZone",        type: "Tech",        cost: 800,  x: 150,  y: 150, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 3,  name: "Merch Corner",    type: "Merchandise", cost: 400,  x: 240,  y: 150, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 4,  name: "VIP Lounge",      type: "VIP",         cost: 1200, x: 330,  y: 150, width: 100, height: 80, rotation: 0, assignedUserId: null },
+    // Right block (after 120px central aisle at ~550)
+    { id: 5,  name: "Street Eats",     type: "Food",        cost: 350,  x: 560,  y: 150, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 6,  name: "Gadget Hub",      type: "Tech",        cost: 600,  x: 650,  y: 150, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 7,  name: "Fan Store",       type: "Merchandise", cost: 300,  x: 740,  y: 150, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 8,  name: "Artisan Crafts",  type: "Merchandise", cost: 450,  x: 830,  y: 150, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    // Premium corner booth (end of row A right)
+    { id: 9,  name: "Elite Box",       type: "VIP",         cost: 1000, x: 920,  y: 150, width: 100, height: 80, rotation: 0, assignedUserId: null },
+
+    // ── ROW B — y=310, standard 80×80 booths ────────────────────────
+    { id: 10, name: "Taco Stand",      type: "Food",        cost: 350,  x: 60,   y: 310, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 11, name: "Pixel Labs",      type: "Tech",        cost: 700,  x: 150,  y: 310, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 12, name: "Retro Gear",      type: "Merchandise", cost: 380,  x: 240,  y: 310, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 13, name: "Gold Pass",       type: "VIP",         cost: 1500, x: 330,  y: 310, width: 100, height: 80, rotation: 0, assignedUserId: null },
+    { id: 14, name: "Smoothie Bar",    type: "Food",        cost: 400,  x: 560,  y: 310, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 15, name: "Drone Zone",      type: "Tech",        cost: 850,  x: 650,  y: 310, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 16, name: "Vinyl Records",   type: "Merchandise", cost: 320,  x: 740,  y: 310, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 17, name: "AI Demos",        type: "Tech",        cost: 900,  x: 830,  y: 310, width: 100, height: 80, rotation: 0, assignedUserId: null },
+
+    // ── ROW C — y=470, mixed sizes ──────────────────────────────────
+    { id: 18, name: "Sushi Station",   type: "Food",        cost: 550,  x: 60,   y: 470, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 19, name: "VR Arcade",       type: "Tech",        cost: 750,  x: 150,  y: 470, width: 100, height: 80, rotation: 0, assignedUserId: null },
+    { id: 20, name: "Sticker Shop",    type: "Merchandise", cost: 200,  x: 260,  y: 470, width: 80, height: 80, rotation: 0, assignedUserId: null },
+    { id: 21, name: "Platinum Suite",  type: "VIP",         cost: 2000, x: 350,  y: 470, width: 120, height: 80, rotation: 0, assignedUserId: null },
+    { id: 22, name: "BBQ Pit",         type: "Food",        cost: 600,  x: 560,  y: 470, width: 100, height: 80, rotation: 0, assignedUserId: null },
+    { id: 23, name: "Robotics Lab",    type: "Tech",        cost: 950,  x: 670,  y: 470, width: 100, height: 80, rotation: 0, assignedUserId: null },
+
+    // ── Unplaced booth (available in sidebar) ───────────────────────
+    { id: 24, name: "Pop-Up Stage",    type: "VIP",         cost: 900,  x: 0,    y: 0,   width: 120, height: 80, rotation: 0, assignedUserId: null },
   ],
   products: [
-    {
-      id: 1,
-      storeId: 1,
-      name: "Burger",
-      description: "Delicious beef burger",
-      price: 15,
-      imageUrl: null,
-      status: "available",
-      reservedById: null,
-      reservedAt: null,
-    },
-    {
-      id: 2,
-      storeId: 1,
-      name: "Fries",
-      description: "Crispy golden fries",
-      price: 5,
-      imageUrl: null,
-      status: "available",
-      reservedById: null,
-      reservedAt: null,
-    },
-    {
-      id: 3,
-      storeId: 2,
-      name: "Event T-Shirt",
-      description: "Limited edition event tee",
-      price: 25,
-      imageUrl: null,
-      status: "available",
-      reservedById: null,
-      reservedAt: null,
-    },
+    { id: 1,  storeId: 1,  name: "Gourmet Bites Slot",   description: "Book Gourmet Bites booth (Row A-1).",  price: 500,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 2,  storeId: 2,  name: "TechZone Slot",         description: "Book TechZone booth (Row A-2).",       price: 800,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 3,  storeId: 3,  name: "Merch Corner Slot",     description: "Book Merch Corner booth (Row A-3).",   price: 400,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 4,  storeId: 4,  name: "VIP Lounge Slot",       description: "Book VIP Lounge booth (Row A-4).",     price: 1200, imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 5,  storeId: 5,  name: "Street Eats Slot",      description: "Book Street Eats booth (Row A-5).",    price: 350,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 6,  storeId: 6,  name: "Gadget Hub Slot",       description: "Book Gadget Hub booth (Row A-6).",     price: 600,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 7,  storeId: 7,  name: "Fan Store Slot",        description: "Book Fan Store booth (Row A-7).",      price: 300,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 8,  storeId: 8,  name: "Artisan Crafts Slot",   description: "Book Artisan Crafts booth (Row A-8).", price: 450,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 9,  storeId: 9,  name: "Elite Box Slot",        description: "Book Elite Box booth (Row A-9).",      price: 1000, imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 10, storeId: 10, name: "Taco Stand Slot",       description: "Book Taco Stand booth (Row B-1).",     price: 350,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 11, storeId: 11, name: "Pixel Labs Slot",       description: "Book Pixel Labs booth (Row B-2).",     price: 700,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 12, storeId: 12, name: "Retro Gear Slot",       description: "Book Retro Gear booth (Row B-3).",     price: 380,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 13, storeId: 13, name: "Gold Pass Slot",        description: "Book Gold Pass booth (Row B-4).",      price: 1500, imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 14, storeId: 14, name: "Smoothie Bar Slot",     description: "Book Smoothie Bar booth (Row B-5).",   price: 400,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 15, storeId: 15, name: "Drone Zone Slot",       description: "Book Drone Zone booth (Row B-6).",     price: 850,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 16, storeId: 16, name: "Vinyl Records Slot",    description: "Book Vinyl Records booth (Row B-7).",  price: 320,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 17, storeId: 17, name: "AI Demos Slot",         description: "Book AI Demos booth (Row B-8).",       price: 900,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 18, storeId: 18, name: "Sushi Station Slot",    description: "Book Sushi Station booth (Row C-1).",  price: 550,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 19, storeId: 19, name: "VR Arcade Slot",        description: "Book VR Arcade booth (Row C-2).",      price: 750,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 20, storeId: 20, name: "Sticker Shop Slot",     description: "Book Sticker Shop booth (Row C-3).",   price: 200,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 21, storeId: 21, name: "Platinum Suite Slot",   description: "Book Platinum Suite booth (Row C-4).", price: 2000, imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 22, storeId: 22, name: "BBQ Pit Slot",          description: "Book BBQ Pit booth (Row C-5).",        price: 600,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 23, storeId: 23, name: "Robotics Lab Slot",     description: "Book Robotics Lab booth (Row C-6).",   price: 950,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
+    { id: 24, storeId: 24, name: "Pop-Up Stage Slot",     description: "Book Pop-Up Stage booth.",             price: 900,  imageUrl: null, status: "available", reservedById: null, reservedAt: null },
   ],
   purchases: [],
+  furniture: [
+    // ═══ ENTRANCE INFRASTRUCTURE ═══════════════════════════════════
+    // Emergency exits — top corners
+    { id: 1,  name: "Exit NW",             kind: "exit",         x: 10,   y: 5,   width: 50,  height: 30, rotation: 0 },
+    { id: 2,  name: "Exit NE",             kind: "exit",         x: 1190, y: 5,   width: 50,  height: 30, rotation: 0 },
+    // Registration desks — below entrance
+    { id: 3,  name: "Registration Desk A", kind: "registration", x: 250,  y: 95,  width: 150, height: 30, rotation: 0 },
+    { id: 4,  name: "Registration Desk B", kind: "registration", x: 550,  y: 95,  width: 150, height: 30, rotation: 0 },
+    { id: 5,  name: "Registration Desk C", kind: "registration", x: 850,  y: 95,  width: 150, height: 30, rotation: 0 },
+
+    // ═══ LEFT WALL INFRASTRUCTURE ══════════════════════════════════
+    // Stairwell — left side
+    { id: 6,  name: "Stairwell West",      kind: "stairs",       x: 10,   y: 150, width: 40,  height: 60, rotation: 0 },
+    // Wall section left side
+    { id: 7,  name: "West Wall",           kind: "wall",         x: 0,    y: 60,  width: 10,  height: 80, rotation: 0 },
+
+    // ═══ RIGHT WALL INFRASTRUCTURE ═════════════════════════════════
+    // Info screens — between rows on the right
+    { id: 8,  name: "Info Screen A",       kind: "screen",       x: 1060, y: 160, width: 60,  height: 20, rotation: 0 },
+    { id: 9,  name: "Info Screen B",       kind: "screen",       x: 1060, y: 320, width: 60,  height: 20, rotation: 0 },
+    { id: 10, name: "Wayfinding Screen",   kind: "screen",       x: 1060, y: 480, width: 60,  height: 20, rotation: 0 },
+
+    // ═══ CENTRAL AISLE FURNITURE ═══════════════════════════════════
+    // Benches in aisle rest areas (between rows)
+    { id: 11, name: "Bench A1",            kind: "bench",        x: 460,  y: 245, width: 60,  height: 20, rotation: 0 },
+    { id: 12, name: "Bench A2",            kind: "bench",        x: 460,  y: 270, width: 60,  height: 20, rotation: 0 },
+    { id: 13, name: "Bench B1",            kind: "bench",        x: 460,  y: 405, width: 60,  height: 20, rotation: 0 },
+    { id: 14, name: "Bench B2",            kind: "bench",        x: 460,  y: 430, width: 60,  height: 20, rotation: 0 },
+
+    // ═══ MAIN STAGE — bottom center ════════════════════════════════
+    { id: 15, name: "Main Stage",          kind: "stage",        x: 200,  y: 580, width: 250, height: 100, rotation: 0 },
+
+    // ═══ F&B AREA — bottom right (tables) ══════════════════════════
+    { id: 16, name: "F&B Table 1",         kind: "table",        x: 950,  y: 580, width: 50,  height: 40, rotation: 0 },
+    { id: 17, name: "F&B Table 2",         kind: "table",        x: 1010, y: 580, width: 50,  height: 40, rotation: 0 },
+    { id: 18, name: "F&B Table 3",         kind: "table",        x: 1070, y: 580, width: 50,  height: 40, rotation: 0 },
+    { id: 19, name: "F&B Table 4",         kind: "table",        x: 950,  y: 640, width: 50,  height: 40, rotation: 0 },
+    { id: 20, name: "F&B Table 5",         kind: "table",        x: 1010, y: 640, width: 50,  height: 40, rotation: 0 },
+    { id: 21, name: "F&B Table 6",         kind: "table",        x: 1070, y: 640, width: 50,  height: 40, rotation: 0 },
+
+    // ═══ RESTROOMS — bottom left ═══════════════════════════════════
+    { id: 22, name: "Restroom M",          kind: "restroom",     x: 20,   y: 580, width: 60,  height: 50, rotation: 0 },
+    { id: 23, name: "Restroom F",          kind: "restroom",     x: 90,   y: 580, width: 60,  height: 50, rotation: 0 },
+
+    // ═══ EMERGENCY EXITS — bottom corners ══════════════════════════
+    { id: 24, name: "Exit SW",             kind: "exit",         x: 10,   y: 660, width: 50,  height: 30, rotation: 0 },
+    { id: 25, name: "Exit SE",             kind: "exit",         x: 1190, y: 660, width: 50,  height: 30, rotation: 0 },
+
+    // ═══ STRUCTURAL COLUMNS — grid pattern ═════════════════════════
+    { id: 26, name: "Column A1",           kind: "column",       x: 440,  y: 150, width: 15,  height: 15, rotation: 0 },
+    { id: 27, name: "Column A2",           kind: "column",       x: 540,  y: 150, width: 15,  height: 15, rotation: 0 },
+    { id: 28, name: "Column B1",           kind: "column",       x: 440,  y: 310, width: 15,  height: 15, rotation: 0 },
+    { id: 29, name: "Column B2",           kind: "column",       x: 540,  y: 310, width: 15,  height: 15, rotation: 0 },
+    { id: 30, name: "Column C1",           kind: "column",       x: 440,  y: 470, width: 15,  height: 15, rotation: 0 },
+    { id: 31, name: "Column C2",           kind: "column",       x: 540,  y: 470, width: 15,  height: 15, rotation: 0 },
+
+    // ═══ BARRIERS — aisle boundary markers ═════════════════════════
+    { id: 32, name: "Barrier Row A Left",  kind: "barrier",      x: 60,   y: 140, width: 370, height: 5,  rotation: 0 },
+    { id: 33, name: "Barrier Row A Right", kind: "barrier",      x: 560,  y: 140, width: 460, height: 5,  rotation: 0 },
+    { id: 34, name: "Barrier Row B Left",  kind: "barrier",      x: 60,   y: 300, width: 370, height: 5,  rotation: 0 },
+    { id: 35, name: "Barrier Row B Right", kind: "barrier",      x: 560,  y: 300, width: 370, height: 5,  rotation: 0 },
+    { id: 36, name: "Barrier Row C Left",  kind: "barrier",      x: 60,   y: 460, width: 410, height: 5,  rotation: 0 },
+    { id: 37, name: "Barrier Row C Right", kind: "barrier",      x: 560,  y: 460, width: 210, height: 5,  rotation: 0 },
+
+    // ═══ STAIRWELL — right side ════════════════════════════════════
+    { id: 38, name: "Stairwell East",      kind: "stairs",       x: 1180, y: 350, width: 40,  height: 60, rotation: 0 },
+
+    // ═══ LOBBY AREA — sitting near entrance ════════════════════════
+    { id: 39, name: "Lobby Seating",       kind: "lobby",        x: 60,   y: 60,  width: 150, height: 50, rotation: 0 },
+    { id: 40, name: "Sponsor Screen",      kind: "screen",       x: 1120, y: 60,  width: 80,  height: 20, rotation: 0 },
+  ],
   nextIds: {
-    store: 3,
-    product: 4,
+    store: 25,
+    product: 25,
     purchase: 1,
+    furniture: 41,
   },
 };
 
@@ -144,6 +263,9 @@ function readData(): DemoData {
 
   try {
     const parsed = JSON.parse(raw) as DemoData;
+    // Backward compat: add furniture if missing from older localStorage
+    if (!parsed.furniture) parsed.furniture = [];
+    if (!parsed.nextIds.furniture) parsed.nextIds.furniture = 1;
     const cleaned = cleanupExpiredReservations(parsed);
     if (cleaned !== parsed) {
       storage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
@@ -262,6 +384,7 @@ export function createStore(store: InsertStore): Store {
     y: store.y ?? 0,
     width: store.width ?? 50,
     height: store.height ?? 50,
+    rotation: store.rotation ?? 0,
     assignedUserId: store.assignedUserId ?? null,
   };
 
@@ -312,6 +435,47 @@ export function deleteStore(id: number): void {
     purchases: current.purchases.filter((purchase) => purchase.storeId !== id),
   };
   writeData(next);
+}
+
+export function getFurniture(): Furniture[] {
+  return getOrCreateSnapshot("furniture", () => readData().furniture);
+}
+
+export function createFurniture(input: InsertFurniture): Furniture {
+  const current = readData();
+  const created: Furniture = {
+    id: current.nextIds.furniture,
+    name: input.name,
+    kind: input.kind,
+    x: input.x ?? 0,
+    y: input.y ?? 0,
+    width: input.width ?? 60,
+    height: input.height ?? 40,
+    rotation: input.rotation ?? 0,
+  };
+  const next: DemoData = {
+    ...current,
+    furniture: [...current.furniture, created],
+    nextIds: { ...current.nextIds, furniture: current.nextIds.furniture + 1 },
+  };
+  writeData(next);
+  return created;
+}
+
+export function updateFurniture(id: number, updates: UpdateFurnitureRequest): Furniture {
+  const current = readData();
+  const index = current.furniture.findIndex((f) => f.id === id);
+  if (index < 0) throw new Error("Furniture not found.");
+  const updated: Furniture = { ...current.furniture[index], ...updates };
+  const furniture = [...current.furniture];
+  furniture[index] = updated;
+  writeData({ ...current, furniture });
+  return updated;
+}
+
+export function deleteFurniture(id: number): void {
+  const current = readData();
+  writeData({ ...current, furniture: current.furniture.filter((f) => f.id !== id) });
 }
 
 export function resetDemoStore(): void {

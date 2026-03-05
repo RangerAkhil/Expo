@@ -1,15 +1,23 @@
-import React, { useEffect, useRef } from "react";
-import { HTMLMotionProps, motion } from "framer-motion";
-import { Store as StoreIcon, Trash2 } from "lucide-react";
-import type { EventSettings, Store, Product } from "@/types/models";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Canvas, useThree } from "@react-three/fiber";
+import * as THREE from "three";
+import { ZoomIn, ZoomOut, Maximize, RotateCcw } from "lucide-react";
+import type { EventSettings, Store, Product, Furniture } from "@/types/models";
 import { useUpdateStore } from "@/hooks/use-stores";
+import { useUpdateFurniture } from "@/hooks/use-furniture";
+import { FurnitureMesh } from "@/components/canvas/FurnitureMesh";
 import { Badge } from "@/components/ui/badge";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
+import { snapToGrid, worldToPixel } from "@/lib/floor-plan-config";
+import { FloorPlane } from "@/components/canvas/FloorPlane";
+import { BoothMesh } from "@/components/canvas/BoothMesh";
+import { BoothTooltip } from "@/components/canvas/BoothTooltip";
+import { SceneControls, type CameraApi } from "@/components/canvas/SceneControls";
 
 interface GroundLayoutProps {
   settings: EventSettings;
   stores: Store[];
+  furniture?: Furniture[];
   isInteractive?: boolean;
   onStoreClick?: (store: Store) => void;
   currentUserCartId?: number;
@@ -18,163 +26,249 @@ interface GroundLayoutProps {
   onRequestDeleteStore?: (store: Store, bookedCount: number) => void;
 }
 
+/** Apply initial zoom once on mount. */
+function ZoomSyncer({ fitZoom }: { fitZoom: number }) {
+  const { camera, invalidate } = useThree();
+  const applied = useRef(false);
+
+  useEffect(() => {
+    if (!applied.current) {
+      (camera as THREE.OrthographicCamera).zoom = fitZoom;
+      camera.updateProjectionMatrix();
+      invalidate();
+      applied.current = true;
+    }
+  }, [fitZoom, camera, invalidate]);
+
+  return null;
+}
+
 export function GroundLayout({
   settings,
   stores,
+  furniture = [],
   isInteractive = true,
   onStoreClick,
-  currentUserCartId,
   allProducts = [],
-  currentUserId,
-  onRequestDeleteStore,
 }: GroundLayoutProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const cameraApiRef = useRef<CameraApi>(null);
   const updateStore = useUpdateStore();
-  const [positions, setPositions] = React.useState<Record<number, { x: number; y: number }>>({});
-  const [scale, setScale] = React.useState(1);
-  const [pan, setPan] = React.useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = React.useState(false);
-  const lastMouse = React.useRef({ x: 0, y: 0 });
-  const panStartRef = React.useRef<{ x: number; y: number } | null>(null);
+  const updateFurnitureMutation = useUpdateFurniture();
 
-  const isCircular = settings.shape === "circular";
+  const [containerWidth, setContainerWidth] = useState(800);
+  const [fitZoom, setFitZoom] = useState(1);
+
+  // Fixed canvas height based on aspect ratio
+  const canvasHeight = Math.min(700, Math.round(containerWidth * (settings.height / settings.width)));
+
+  // Tooltip state
+  const [tooltip, setTooltip] = useState<{
+    store: Store | null;
+    status: string;
+    x: number;
+    y: number;
+    visible: boolean;
+  }>({ store: null, status: "", x: 0, y: 0, visible: false });
+
   const placedStores = stores.filter((s) => s.x !== 0 || s.y !== 0);
-  const renderedStores = placedStores;
-  const hasInitialized = React.useRef(false);
-  const isDraggingRef = React.useRef(false);
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const placedFurniture = furniture.filter((f) => f.x !== 0 || f.y !== 0);
 
+  // ── Responsive sizing ──────────────────────────────────────
   useEffect(() => {
-    const el = viewportRef.current;
+    const el = wrapperRef.current;
     if (!el) return;
-
-    const wheelHandler = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
-
-      e.preventDefault(); // now this works
-
-      const zoomIntensity = 0.1;
-
-      setScale((prev) => {
-        const next = e.deltaY > 0 ? prev - zoomIntensity : prev + zoomIntensity;
-        return Math.min(3, Math.max(0.5, next));
-      });
-    };
-
-    el.addEventListener("wheel", wheelHandler, { passive: false });
-
-    return () => {
-      el.removeEventListener("wheel", wheelHandler);
-    };
-  }, []);
-  useEffect(() => {
-    if (hasInitialized.current) return;
-
-    const map: Record<number, { x: number; y: number }> = {};
-    stores.forEach((store) => {
-      map[store.id] = { x: store.x, y: store.y };
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const cw = entry.contentRect.width;
+      if (cw > 0) {
+        setContainerWidth(cw);
+        const ch = Math.min(700, Math.round(cw * (settings.height / settings.width)));
+        const zoomX = cw / settings.width;
+        const zoomY = ch / settings.height;
+        setFitZoom(Math.min(zoomX, zoomY) * 0.9);
+      }
     });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [settings.width, settings.height]);
 
-    setPositions(map);
-    hasInitialized.current = true;
-  }, [stores]);
-
-  useEffect(() => {
-    if (!hasInitialized.current) return;
-    setPositions((prev) => {
-      let changed = false;
-      const next: Record<number, { x: number; y: number }> = {};
-
-      stores.forEach((store) => {
-        const existing = prev[store.id];
-        if (!existing || (store.x !== 0 || store.y !== 0)) {
-          if (!existing || existing.x !== store.x || existing.y !== store.y) changed = true;
-          next[store.id] = { x: store.x, y: store.y };
-          return;
+  // ── Overlap detection (checks both stores and furniture) ─
+  const checkOverlap = useCallback(
+    (itemId: number, x: number, y: number, w: number, h: number, kind: "store" | "furniture" = "store"): boolean => {
+      for (const other of stores) {
+        if (kind === "store" && other.id === itemId) continue;
+        if (other.x === 0 && other.y === 0) continue;
+        if (x < other.x + other.width && x + w > other.x && y < other.y + other.height && y + h > other.y) {
+          return true;
         }
-        next[store.id] = existing;
-      });
+      }
+      for (const other of furniture) {
+        if (kind === "furniture" && other.id === itemId) continue;
+        if (other.x === 0 && other.y === 0) continue;
+        if (x < other.x + other.width && x + w > other.x && y < other.y + other.height && y + h > other.y) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [stores, furniture],
+  );
 
-      if (Object.keys(prev).length !== Object.keys(next).length) changed = true;
-      return changed ? next : prev;
-    });
-  }, [stores]);
-
-  const handleDrop = (e: React.DragEvent) => {
-    if (!isInteractive) return;
-    e.preventDefault();
-    const storeId = e.dataTransfer.getData("storeId");
-    if (!storeId || !containerRef.current) return;
-    const id = parseInt(storeId, 10);
-    const store = stores.find((entry) => entry.id === id);
-    if (!store) return;
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(settings.width - store.width, Math.round(e.clientX - rect.left - store.width / 2)));
-    const y = Math.max(0, Math.min(settings.height - store.height, Math.round(e.clientY - rect.top - store.height / 2)));
-
-    updateStore.mutate({ id, x, y });
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    if (!isInteractive) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-  };
-
+  // ── Utilization ──────────────────────────────────────────
   const totalArea = settings.width * settings.height;
-  const usedArea = placedStores.reduce((acc, store) => acc + store.width * store.height, 0);
+  const usedArea = placedStores.reduce((acc, s) => acc + s.width * s.height, 0)
+    + placedFurniture.reduce((acc, f) => acc + f.width * f.height, 0);
   const utilization = Math.min(100, Math.round((usedArea / totalArea) * 100)) || 0;
 
-  const handleWheel = (e: React.WheelEvent) => {
-    if (!e.ctrlKey) return;
+  // ── Sidebar DnD bridge ──────────────────────────────────
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (!isInteractive) return;
+      e.preventDefault();
 
-    e.preventDefault();
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      const api = cameraApiRef.current;
+      if (!rect || !api) return;
 
-    const zoomIntensity = 0.1;
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const cam = api.getCamera();
+      const rc = new THREE.Raycaster();
+      rc.setFromCamera(new THREE.Vector2(ndcX, ndcY), cam);
+      const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const hit = new THREE.Vector3();
+      if (!rc.ray.intersectPlane(ground, hit)) return;
+      const pixel = worldToPixel(hit.x, hit.z, settings.width, settings.height);
 
-    setScale((prev) => {
-      const next = e.deltaY > 0 ? prev - zoomIntensity : prev + zoomIntensity;
-      return Math.min(3, Math.max(0.5, next));
-    });
-  };
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 2) return;
+      // Handle store drops
+      const storeId = e.dataTransfer.getData("storeId");
+      if (storeId) {
+        const id = parseInt(storeId, 10);
+        const store = stores.find((s) => s.id === id);
+        if (!store) return;
+        const x = snapToGrid(Math.max(0, Math.min(settings.width - store.width, pixel.x - store.width / 2)));
+        const y = snapToGrid(Math.max(0, Math.min(settings.height - store.height, pixel.y - store.height / 2)));
+        if (checkOverlap(id, x, y, store.width, store.height, "store")) return;
+        updateStore.mutate({ id, x, y });
+        return;
+      }
 
-    const target = e.target as HTMLElement;
-    if (target.closest("[data-store]")) return;
+      // Handle furniture drops
+      const furnitureId = e.dataTransfer.getData("furnitureId");
+      if (furnitureId) {
+        const id = parseInt(furnitureId, 10);
+        const item = furniture.find((f) => f.id === id);
+        if (!item) return;
+        const x = snapToGrid(Math.max(0, Math.min(settings.width - item.width, pixel.x - item.width / 2)));
+        const y = snapToGrid(Math.max(0, Math.min(settings.height - item.height, pixel.y - item.height / 2)));
+        if (checkOverlap(id, x, y, item.width, item.height, "furniture")) return;
+        updateFurnitureMutation.mutate({ id, x, y });
+      }
+    },
+    [isInteractive, stores, furniture, settings, updateStore, updateFurnitureMutation, checkOverlap],
+  );
 
-    panStartRef.current = { x: e.clientX, y: e.clientY };
-    lastMouse.current = { x: e.clientX, y: e.clientY };
-  };
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!isInteractive) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    },
+    [isInteractive],
+  );
 
-  const handleMouseUp = () => {
-    setIsPanning(false);
-    panStartRef.current = null;
-  };
+  // ── Booth drag callbacks ────────────────────────────────
+  const handleBoothDragStart = useCallback(() => {}, []);
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!panStartRef.current) return;
+  const handleBoothDragEnd = useCallback(
+    (storeId: number, x: number, y: number) => {
+      if (x === 0 && y === 0) {
+        updateStore.mutate({ id: storeId, x: 0, y: 0 });
+        return;
+      }
+      const store = stores.find((s) => s.id === storeId);
+      if (!store) return;
+      if (checkOverlap(storeId, x, y, store.width, store.height, "store")) {
+        updateStore.mutate({ id: storeId, x: store.x, y: store.y });
+        return;
+      }
+      updateStore.mutate({ id: storeId, x, y });
+    },
+    [updateStore, stores, checkOverlap],
+  );
 
-    const dxTotal = e.clientX - panStartRef.current.x;
-    const dyTotal = e.clientY - panStartRef.current.y;
+  // ── Furniture drag callbacks ──────────────────────────
+  const handleFurnitureDragEnd = useCallback(
+    (furnitureId: number, x: number, y: number) => {
+      if (x === 0 && y === 0) {
+        updateFurnitureMutation.mutate({ id: furnitureId, x: 0, y: 0 });
+        return;
+      }
+      const item = furniture.find((f) => f.id === furnitureId);
+      if (!item) return;
+      if (checkOverlap(furnitureId, x, y, item.width, item.height, "furniture")) {
+        updateFurnitureMutation.mutate({ id: furnitureId, x: item.x, y: item.y });
+        return;
+      }
+      updateFurnitureMutation.mutate({ id: furnitureId, x, y });
+    },
+    [updateFurnitureMutation, furniture, checkOverlap],
+  );
 
-    // start panning only after small movement
-    if (!isPanning) {
-      if (Math.abs(dxTotal) < 5 && Math.abs(dyTotal) < 5) return;
-      setIsPanning(true);
-    }
+  const handleFurnitureRotate = useCallback(
+    (furnitureId: number, rotation: number) => {
+      updateFurnitureMutation.mutate({ id: furnitureId, rotation });
+    },
+    [updateFurnitureMutation],
+  );
 
-    const dx = e.clientX - lastMouse.current.x;
-    const dy = e.clientY - lastMouse.current.y;
+  // ── Booth rotate (right-click in organizer mode) ───────
+  const handleBoothRotate = useCallback(
+    (storeId: number, rotation: number) => {
+      updateStore.mutate({ id: storeId, rotation });
+    },
+    [updateStore],
+  );
 
-    setPan((prev) => ({
-      x: prev.x + dx,
-      y: prev.y + dy
-    }));
+  // ── Booth click ─────────────────────────────────────────
+  const handleBoothClick = useCallback(
+    (store: Store) => {
+      onStoreClick?.(store);
+    },
+    [onStoreClick],
+  );
 
-    lastMouse.current = { x: e.clientX, y: e.clientY };
-  };
+  // ── Tooltip handlers ────────────────────────────────────
+  const handlePointerEnter = useCallback(
+    (store: Store, clientX: number, clientY: number) => {
+      if (isInteractive) return;
+      const wrapper = wrapperRef.current;
+      if (!wrapper) return;
+      const rect = wrapper.getBoundingClientRect();
+      setTooltip({
+        store,
+        status: getBoothStatus(store, allProducts),
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+        visible: true,
+      });
+    },
+    [isInteractive, allProducts],
+  );
+
+  const handlePointerLeave = useCallback(() => {
+    setTooltip((prev) => ({ ...prev, visible: false }));
+  }, []);
+
+  // ── Zoom controls ───────────────────────────────────────
+  const handleZoomIn = () => cameraApiRef.current?.zoomIn();
+  const handleZoomOut = () => cameraApiRef.current?.zoomOut();
+  const handleReset = () => cameraApiRef.current?.reset();
+  const handleFitToScreen = () => cameraApiRef.current?.fitToScreen();
+
+  const controlsRef = cameraApiRef.current?.controlsRef ?? { current: null };
 
   return (
     <div className="flex flex-col gap-4 w-full">
@@ -182,214 +276,143 @@ export function GroundLayout({
         <div className="flex items-center justify-between bg-card p-4 rounded-2xl border shadow-sm">
           <div>
             <h3 className="font-display font-semibold text-lg">Canvas Overview</h3>
-            <p className="text-sm text-muted-foreground">Drag unplaced stores here to map them.</p>
+            <p className="text-sm text-muted-foreground">
+              Drag booths onto the floor plan. Double-click a booth to rotate it.
+            </p>
           </div>
           <div className="text-right">
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium">Space Utilization</span>
-              <Badge variant={utilization > 80 ? "destructive" : "secondary"}>{utilization}%</Badge>
+              <Badge variant={utilization > 80 ? "destructive" : "secondary"}>
+                {utilization}%
+              </Badge>
             </div>
             <div className="w-48 h-2 bg-secondary rounded-full mt-2 overflow-hidden">
-              <div className="h-full bg-primary transition-all duration-500" style={{ width: `${utilization}%` }} />
+              <div
+                className="h-full bg-primary transition-all duration-500"
+                style={{ width: `${utilization}%` }}
+              />
             </div>
           </div>
         </div>
       )}
 
-      <div className="w-full overflow-auto bg-muted rounded-2xl border shadow-inner max-h-[700px] relative "
-        ref={viewportRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+      <div
+        ref={wrapperRef}
+        className="w-full overflow-hidden bg-muted rounded-2xl border shadow-inner relative"
+        style={{ height: canvasHeight }}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
       >
-        <div
-          style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
-            transformOrigin: "0 0",
-            width: "fit-content",
-            height: "fit-content"
+        <Canvas
+          orthographic
+          camera={{
+            position: [0, 500, 0],
+            up: [0, 0, -1],
+            zoom: fitZoom,
+            near: 0.1,
+            far: 2000,
           }}
+          frameloop="always"
+          style={{ width: "100%", height: "100%" }}
+          gl={{ antialias: true, alpha: false }}
         >
-          <div
-            ref={containerRef}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            className={`relative bg-blueprint shadow-xl border-2 border-primary/20 transition-all ${isCircular ? "bg-blueprint-circular" : "rounded-lg"}`}
-            style={{
-              width: settings.width,
-              height: settings.height,
-              minWidth: settings.width,
-              minHeight: settings.height,
-            }}
-          >
-            {renderedStores.map((store) => {
-              const storeProducts = allProducts.filter((p) => p.storeId === store.id);
-              const bookedCount = storeProducts.filter((p) => p.status === "booked").length;
-              const myReservedCount = storeProducts.filter(
-                (p) => p.status === "reserved" && p.reservedById === currentUserId,
-              ).length;
-              const otherReservedCount = storeProducts.filter(
-                (p) => p.status === "reserved" && p.reservedById !== currentUserId,
-              ).length;
-              const hasPurchased = bookedCount > 0;
-              const hasMyReservation = myReservedCount > 0;
-              const hasOtherReservation = otherReservedCount > 0;
-              const MotionDiv = motion.div as React.FC<HTMLMotionProps<"div">>;
+          <color attach="background" args={["#2a2a2a"]} />
+          <ambientLight intensity={0.7} />
+          <directionalLight position={[400, 600, 300]} intensity={0.8} />
 
-              return (
-                <MotionDiv
-                  data-store
-                  key={store.id}
-                  drag={isInteractive && !isPanning}
-                  dragListener={isInteractive}
-                  dragMomentum={false}
-                  dragElastic={0}
-                  transition={{ duration: 0 }}
-                  onTapStart={(e) => {
-                    if (isInteractive) e.stopPropagation();
-                  }}
-                  onDragStart={() => {
-                    isDraggingRef.current = true;
-                    panStartRef.current = null;
-                    setIsPanning(false);
-                  }}
-                  onDragEnd={(_, info) => {
-                    if (!isInteractive || !containerRef.current) return;
+          <ZoomSyncer fitZoom={fitZoom} />
+          <SceneControls ref={cameraApiRef} initialZoom={fitZoom} />
 
-                    const rawX = (positions[store.id]?.x || 0) + info.offset.x / scale;
-                    const rawY = (positions[store.id]?.y || 0) + info.offset.y / scale;
-                    const isOutside =
-                      rawX + store.width * 0.5 < 0 ||
-                      rawY + store.height * 0.5 < 0 ||
-                      rawX + store.width * 0.5 > settings.width ||
-                      rawY + store.height * 0.5 > settings.height;
+          <FloorPlane width={settings.width} height={settings.height} />
 
-                    if (isOutside) {
-                      setPositions((prev) => ({
-                        ...prev,
-                        [store.id]: { x: 0, y: 0 },
-                      }));
+          {placedStores.map((store) => {
+            const status = getBoothStatus(store, allProducts) as
+              | "available"
+              | "reserved"
+              | "booked";
 
-                      updateStore.mutate({ id: store.id, x: 0, y: 0 });
-                      window.setTimeout(() => {
-                        isDraggingRef.current = false;
-                      }, 0);
-                      return;
-                    }
+            return (
+              <BoothMesh
+                key={store.id}
+                store={store}
+                status={status}
+                isInteractive={isInteractive}
+                isDraggable={isInteractive}
+                canvasWidth={settings.width}
+                canvasHeight={settings.height}
+                otherStores={placedStores}
+                controlsRef={controlsRef}
+                onDragStart={handleBoothDragStart}
+                onDragEnd={handleBoothDragEnd}
+                onClick={handleBoothClick}
+                onRotate={isInteractive ? handleBoothRotate : undefined}
+                onPointerEnter={handlePointerEnter}
+                onPointerLeave={handlePointerLeave}
+              />
+            );
+          })}
 
-                    setPositions((prev) => ({
-                      ...prev,
-                      [store.id]: { x: rawX, y: rawY },
-                    }));
+          {placedFurniture.map((item) => (
+            <FurnitureMesh
+              key={`f-${item.id}`}
+              furniture={item}
+              isInteractive={isInteractive}
+              canvasWidth={settings.width}
+              canvasHeight={settings.height}
+              allFurniture={placedFurniture}
+              allStores={placedStores}
+              controlsRef={controlsRef}
+              onDragEnd={handleFurnitureDragEnd}
+              onRotate={isInteractive ? handleFurnitureRotate : undefined}
+            />
+          ))}
+        </Canvas>
 
-                    updateStore.mutate({ id: store.id, x: rawX, y: rawY });
-                    window.setTimeout(() => {
-                      isDraggingRef.current = false;
-                    }, 0);
-                  }}
-                  style={{
-                    cursor: !isInteractive ? (onStoreClick ? "pointer" : "default") : undefined,
-                    display: 'inline-block',
-                  }} animate={
-                    isInteractive
-                      ? positions[store.id] ?? { x: store.x, y: store.y }
-                      : { x: store.x, y: store.y }
-                  }
-                >
-                  {isInteractive && (
-                    <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRequestDeleteStore?.(store, bookedCount);
-                        }}
-                        className="p-1 bg-destructive text-destructive-foreground rounded hover:bg-destructive/80"
-                        title="Delete store"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  )}
+        <BoothTooltip
+          store={tooltip.store}
+          status={tooltip.status}
+          x={tooltip.x}
+          y={tooltip.y}
+          visible={tooltip.visible}
+        />
 
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <div
-                        onClick={(e) => {
-                          if (isDraggingRef.current) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            return;
-                          }
-                          onStoreClick?.(store);
-                        }}
-                        className="inline-flex flex-col items-center justify-center h-full p-1 overflow-hidden cursor-pointer"
-                      >
-                        <StoreIcon
-                          className={`w-6 h-6 mb-1 opacity-80 ${hasPurchased ? "text-green-500" : hasMyReservation ? "text-blue-500" : hasOtherReservation ? "text-yellow-500" : "text-primary"}`}
-                        />
-                        <span className="font-semibold text-[10px] text-center px-1 truncate w-full">{store.name}</span>
-                        {hasPurchased && <Badge className="bg-green-500 text-[8px] h-3 px-1 mt-1">Booked {bookedCount}</Badge>}
-                        {hasMyReservation && <Badge className="bg-blue-500 text-[8px] h-3 px-1 mt-1">Reserved {myReservedCount}</Badge>}
-                      </div>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-64 p-4">
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-bold">{store.name}</h4>
-                          <Badge variant="outline">{store.type}</Badge>
-                        </div>
-                        <div className="text-xs space-y-2">
-                          <p className="font-medium">Products ({storeProducts.length})</p>
-                          <div className="max-h-32 overflow-auto space-y-1">
-                            {storeProducts.map((p) => (
-                              <div key={p.id} className="flex justify-between items-center bg-muted/50 p-1.5 rounded">
-                                <span>{p.name}</span>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold">${p.price}</span>
-                                  <div
-                                    className={`w-2 h-2 rounded-full ${p.status === "booked" ? "bg-green-500" : p.reservedById === currentUserId ? "bg-blue-500" : p.status === "reserved" ? "bg-yellow-500" : "bg-primary/20"}`}
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        {isInteractive && (
-                          <div className="flex gap-2 pt-1">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="flex-1 "
-                              onClick={() => updateStore.mutate({ id: store.id, x: 0, y: 0 })}
-                            >
-                              Remove
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              className="flex-1"
-                              onClick={() => onRequestDeleteStore?.(store, bookedCount)}
-                            >
-                              Delete Store
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </MotionDiv>
-              );
-            })}
-
-            {renderedStores.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <p className="text-muted-foreground font-display font-medium text-xl opacity-50">Empty Canvas</p>
-              </div>
-            )}
+        {placedStores.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <p className="text-muted-foreground font-display font-medium text-xl opacity-50">
+              Empty Canvas
+            </p>
           </div>
+        )}
+
+        {/* Zoom controls */}
+        <div className="canvas-controls">
+          <Button variant="ghost" size="icon" className="w-8 h-8" onClick={handleZoomOut} title="Zoom Out">
+            <ZoomOut className="w-4 h-4" />
+          </Button>
+          <span className="text-xs font-medium min-w-[40px] text-center tabular-nums">
+            {Math.round((cameraApiRef.current?.getZoom() ?? fitZoom) * 100)}%
+          </span>
+          <Button variant="ghost" size="icon" className="w-8 h-8" onClick={handleZoomIn} title="Zoom In">
+            <ZoomIn className="w-4 h-4" />
+          </Button>
+          <div className="w-px h-5 bg-border" />
+          <Button variant="ghost" size="icon" className="w-8 h-8" onClick={handleFitToScreen} title="Fit to Screen">
+            <Maximize className="w-4 h-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="w-8 h-8" onClick={handleReset} title="Reset View">
+            <RotateCcw className="w-4 h-4" />
+          </Button>
         </div>
       </div>
     </div>
   );
+}
+
+// ── Helpers ────────────────────────────────────────────────
+
+function getBoothStatus(store: Store, allProducts: Product[]): string {
+  const storeProducts = allProducts.filter((p) => p.storeId === store.id);
+  const primaryProduct = storeProducts[0];
+  return primaryProduct?.status ?? "available";
 }
